@@ -1,0 +1,414 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"ktui/internal/config"
+	"ktui/internal/komari"
+	"ktui/internal/tui"
+)
+
+func main() {
+	args, configPath := splitConfigArg(os.Args[1:])
+	if configPath != "" {
+		if err := os.Setenv("KTUI_CONFIG", configPath); err != nil {
+			fatal(err)
+		}
+	}
+	if len(args) > 0 && args[0] == "config" {
+		if err := handleConfig(args[1:]); err != nil {
+			fatal(err)
+		}
+		return
+	}
+	if len(args) > 0 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
+		if err := handleHelp(args[1:]); err != nil {
+			fatal(err)
+		}
+		return
+	}
+
+	cfg, cfgPath, err := config.Load()
+	if err != nil {
+		fatal(err)
+	}
+	cfg = applyEnv(cfg)
+	cfg = cfg.WithDefaults()
+	if err := cfg.Validate(); err != nil {
+		fatal(err)
+	}
+
+	intervalDefault, err := cfg.IntervalDuration()
+	if err != nil {
+		fatal(err)
+	}
+	timeoutDefault, err := cfg.TimeoutDuration()
+	if err != nil {
+		fatal(err)
+	}
+
+	var (
+		baseURL   string
+		apiKey    string
+		interval  time.Duration
+		timeout   time.Duration
+		once      bool
+		ascii     bool
+		noColor   bool
+		lineMode  bool
+		sheetMode bool
+	)
+
+	flags := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	flags.StringVar(&baseURL, "url", cfg.URL, "Komari base URL")
+	flags.StringVar(&apiKey, "api-key", cfg.APIKey, "Komari API key (sent as Bearer token)")
+	flags.DurationVar(&interval, "interval", intervalDefault, "refresh interval")
+	flags.DurationVar(&timeout, "timeout", timeoutDefault, "HTTP timeout")
+	flags.BoolVar(&once, "once", false, "fetch once and print a summary without entering the TUI")
+	flags.BoolVar(&ascii, "ascii", cfg.ASCII, "use ASCII-only rendering for terminals/fonts with Unicode issues")
+	flags.BoolVar(&noColor, "no-color", cfg.NoColor, "disable ANSI color and inverse video")
+	flags.BoolVar(&lineMode, "line", false, "show servers as one-by-one line blocks")
+	flags.BoolVar(&sheetMode, "sheet", false, "show servers in the sheet/table layout")
+	flags.String("config", cfgPath, "config file path")
+	flags.Usage = printHelp
+	if err := flags.Parse(args); err != nil {
+		fatal(err)
+	}
+
+	mode := tui.ModeSheet
+	if cfg.Mode == "line" {
+		mode = tui.ModeLine
+	}
+	if lineMode && sheetMode {
+		fatal(fmt.Errorf("--line and --sheet cannot be used together"))
+	}
+	if lineMode {
+		mode = tui.ModeLine
+	}
+	if sheetMode {
+		mode = tui.ModeSheet
+	}
+	if strings.TrimSpace(baseURL) == "" {
+		fatal(fmt.Errorf("Komari URL is not set. Run `ktui config set url https://your-komari.example.com` or pass `--url https://your-komari.example.com`"))
+	}
+
+	client, err := komari.NewClientWithOptions(baseURL, komari.Options{APIKey: apiKey, Timeout: timeout})
+	if err != nil {
+		fatal(err)
+	}
+
+	if once {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		snapshot, err := client.Snapshot(ctx)
+		if err != nil {
+			fatal(err)
+		}
+		printSummary(snapshot)
+		return
+	}
+
+	app := tui.NewWithOptions(client, tui.Options{RefreshInterval: interval, ASCII: ascii, NoColor: noColor, Mode: mode})
+	if err := app.Run(context.Background()); err != nil && err != context.Canceled {
+		fatal(err)
+	}
+}
+
+func applyEnv(cfg config.Config) config.Config {
+	if value := os.Getenv("KTUI_URL"); value != "" {
+		cfg.URL = value
+	}
+	if value := os.Getenv("KTUI_API_KEY"); value != "" {
+		cfg.APIKey = value
+	}
+	if value := os.Getenv("KTUI_INTERVAL"); value != "" {
+		cfg.Interval = value
+	}
+	if value := os.Getenv("KTUI_TIMEOUT"); value != "" {
+		cfg.Timeout = value
+	}
+	if value := os.Getenv("KTUI_MODE"); value != "" {
+		cfg.Mode = value
+	}
+	if envBool("KTUI_ASCII") {
+		cfg.ASCII = true
+	}
+	if envBool("NO_COLOR") || envBool("KTUI_NO_COLOR") {
+		cfg.NoColor = true
+	}
+	return cfg
+}
+
+func handleConfig(args []string) error {
+	if len(args) == 0 {
+		printConfigHelp()
+		return nil
+	}
+	switch args[0] {
+	case "help":
+		printConfigHelp()
+		return nil
+	case "path":
+		path, err := config.Path()
+		if err != nil {
+			return err
+		}
+		fmt.Println(path)
+		return nil
+	case "init":
+		fs := flag.NewFlagSet("ktui config init", flag.ExitOnError)
+		force := fs.Bool("force", false, "overwrite existing config")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		path, err := config.Path()
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(path); err == nil && !*force {
+			return fmt.Errorf("config already exists: %s (use --force to overwrite)", path)
+		} else if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		saved, err := config.Save(config.Default())
+		if err != nil {
+			return err
+		}
+		fmt.Println(saved)
+		return nil
+	case "show":
+		cfg, path, err := config.Load()
+		if err != nil {
+			return err
+		}
+		if cfg.APIKey != "" {
+			cfg.APIKey = "********"
+		}
+		data, err := json.MarshalIndent(cfg, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(path)
+		fmt.Println(string(data))
+		return nil
+	case "set":
+		if len(args) != 3 {
+			return fmt.Errorf("usage: ktui config set <key> <value>")
+		}
+		cfg, _, err := config.Load()
+		if err != nil {
+			return err
+		}
+		cfg, err = config.Set(cfg, args[1], args[2])
+		if err != nil {
+			return err
+		}
+		path, err := config.Save(cfg)
+		if err != nil {
+			return err
+		}
+		fmt.Println(path)
+		return nil
+	default:
+		return fmt.Errorf("unknown config command %q", args[0])
+	}
+}
+
+func handleHelp(args []string) error {
+	if len(args) > 1 {
+		return fmt.Errorf("usage: ktui help [config|keys]")
+	}
+	if len(args) == 0 {
+		printHelp()
+		return nil
+	}
+	switch args[0] {
+	case "config":
+		printConfigHelp()
+	case "keys":
+		printKeysHelp()
+	default:
+		return fmt.Errorf("unknown help topic %q", args[0])
+	}
+	return nil
+}
+
+func printHelp() {
+	fmt.Print(`ktui - Komari terminal UI
+
+Usage:
+  ktui [flags]
+  ktui config <path|init|show|set|help>
+  ktui help [config|keys]
+
+Flags:
+  --url URL          Komari base URL
+  --api-key KEY     Komari API key, sent as a Bearer token
+  --interval 5s     refresh interval
+  --timeout 10s     HTTP timeout
+  --sheet           show the boxed sheet layout
+  --line            show one server block after another
+  --ascii           use ASCII-only rendering
+  --no-color        disable ANSI color
+  --once            fetch once and print a summary
+  --config PATH     config file path
+
+Examples:
+  ktui
+  ktui --sheet
+  ktui --line --ascii --no-color
+  ktui config init
+  ktui config set api-key your_api_key
+  ktui help keys
+`)
+}
+
+func printConfigHelp() {
+	path, err := config.Path()
+	if err != nil {
+		path = "<user-config-dir>/ktui/config.json"
+	}
+	fmt.Printf(`ktui config - persistent settings
+
+Default path:
+  %s
+
+Commands:
+  ktui config path
+  ktui config init [--force]
+  ktui config show
+  ktui config set <key> <value>
+  ktui config help
+
+Keys:
+  url       Komari base URL
+  api-key   Komari API key
+  interval  refresh interval, for example 5s
+  timeout   HTTP timeout, for example 10s
+  mode      sheet or line
+  ascii     true or false
+  no-color  true or false
+
+Precedence:
+  defaults < config file < environment variables < command-line flags
+`, path)
+}
+
+func printKeysHelp() {
+	fmt.Print(`ktui keys
+
+List layer:
+  Up/k, Down/j       select server
+  PgUp, PgDn         jump faster
+  Enter/o            open selected server detail
+  m                  switch line/sheet mode
+  r                  refresh now
+  d                  open or reload selected server detail data
+  a                  toggle ASCII compatibility mode
+  q, Ctrl-C          quit
+
+Detail layer:
+  Esc, b, q          return to list layer
+  h/l, 1-5, Tab      switch detail tabs
+  [, ]               switch time window
+  Up/k, Down/j       scroll one card
+  PgUp, PgDn         scroll faster
+`)
+}
+
+func envBool(key string) bool {
+	switch os.Getenv(key) {
+	case "1", "true", "TRUE", "yes", "YES", "on", "ON":
+		return true
+	default:
+		return false
+	}
+}
+
+func splitConfigArg(args []string) ([]string, string) {
+	out := make([]string, 0, len(args))
+	configPath := ""
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--config" && i+1 < len(args) {
+			configPath = args[i+1]
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "--config=") {
+			configPath = strings.TrimPrefix(arg, "--config=")
+			continue
+		}
+		out = append(out, arg)
+	}
+	return out, configPath
+}
+
+func fatal(err error) {
+	fmt.Fprintln(os.Stderr, "ktui:", err)
+	os.Exit(1)
+}
+
+func printSummary(snapshot komari.Snapshot) {
+	title := snapshot.Public.SiteName
+	if title == "" {
+		title = "Komari"
+	}
+	fmt.Printf("%s (%s)\n", title, snapshot.SourceURL)
+	if snapshot.Version.Version != "" {
+		fmt.Printf("Version: %s  RPC: %s\n", snapshot.Version.Version, snapshot.RPCVersion)
+	}
+	if snapshot.Me.LoggedIn {
+		fmt.Printf("Auth: logged in as %s\n", snapshot.Me.Username)
+	} else {
+		fmt.Println("Auth: guest")
+	}
+	if snapshot.NodeDetailErr != nil {
+		fmt.Printf("Node detail: unavailable (%v)\n", snapshot.NodeDetailErr)
+	}
+	fmt.Printf("Online: %d/%d\n", snapshot.Online, snapshot.Total)
+	for _, node := range snapshot.Nodes {
+		st := snapshot.Status[node.UUID]
+		state := "offline"
+		if st.Online {
+			state = "online"
+		}
+		fmt.Printf("- %-36s %-7s CPU %5.1f%% RAM %5.1f%% Disk %5.1f%%\n",
+			node.Name,
+			state,
+			st.CPU,
+			percentage(st.RAM, firstNonZero(st.RAMTotal, node.MemTotal)),
+			percentage(st.Disk, firstNonZero(st.DiskTotal, node.DiskTotal)),
+		)
+		if node.IPv4 != "" || node.IPv6 != "" {
+			fmt.Printf("  ip4 %-39s ip6 %s\n", valueOr(node.IPv4, "-"), valueOr(node.IPv6, "-"))
+		}
+	}
+}
+
+func firstNonZero(a, b int64) int64 {
+	if a != 0 {
+		return a
+	}
+	return b
+}
+
+func percentage(used, total int64) float64 {
+	if total <= 0 {
+		return 0
+	}
+	return float64(used) / float64(total) * 100
+}
+
+func valueOr(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
