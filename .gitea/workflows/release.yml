@@ -6,18 +6,17 @@ on:
       - "v*"
 
 permissions:
-  contents: read
-  releases: write
+  contents: write
 
 jobs:
-  release:
+  goreleaser:
     runs-on: ubuntu-latest
-    env:
-      CGO_ENABLED: "0"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -25,193 +24,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Test
-        run: go test ./...
-
-      - name: Build release binaries
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mkdir -p dist
-          tag="${GITHUB_REF_NAME:-}"
-          if [ -z "$tag" ] && [ -n "${GITHUB_REF:-}" ]; then
-            tag="${GITHUB_REF##*/}"
-          fi
-
-          if [ -z "$tag" ]; then
-            echo "Missing tag name"
-            exit 1
-          fi
-
-          while read -r os arch; do
-            [ -n "$os" ] || continue
-
-            ext=""
-            if [ "$os" = "windows" ]; then
-              ext=".exe"
-            fi
-
-            output="dist/ktui_${tag}_${os}_${arch}${ext}"
-            echo "Building ${output}"
-            GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags="-s -w" -o "$output" ./cmd/ktui
-          done <<'TARGETS'
-          linux amd64
-          linux arm64
-          darwin amd64
-          darwin arm64
-          windows amd64
-          windows arm64
-          TARGETS
-
-          cd dist
-          sha256sum * > checksums.txt
-
-      - name: Create Gitea release
-        id: release
-        shell: bash
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
         env:
           GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
-          GITEA_API_URL: ${{ github.api_url }}
-          GITEA_REPOSITORY: ${{ github.repository }}
-          GITEA_REF_NAME: ${{ github.ref_name }}
-          GITEA_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${GITEA_TOKEN:-}" ]; then
-            echo "GITEA_TOKEN is empty. Please enable repository Actions and grant releases: write permission."
-            exit 1
-          fi
-
-          api="${GITEA_API_URL:-${GITHUB_API_URL:-}}"
-          if [ -z "$api" ] && [ -n "${GITHUB_SERVER_URL:-}" ]; then
-            api="${GITHUB_SERVER_URL%/}/api/v1"
-          fi
-
-          api="${api%/}"
-          repo="${GITEA_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
-          tag="${GITEA_REF_NAME:-${GITHUB_REF_NAME:-}}"
-          sha="${GITEA_SHA:-${GITHUB_SHA:-}}"
-
-          if [ -z "$api" ] || [ -z "$repo" ] || [ -z "$tag" ] || [ -z "$sha" ]; then
-            echo "Missing release context: api=${api:-<empty>} repo=${repo:-<empty>} tag=${tag:-<empty>} sha=${sha:-<empty>}"
-            exit 1
-          fi
-
-          response="$(mktemp)"
-
-          status="$(curl -sS -o "$response" -w "%{http_code}" \
-            -H "Authorization: token ${GITEA_TOKEN}" \
-            -H "Accept: application/json" \
-            "${api}/repos/${repo}/releases/tags/${tag}")"
-
-          if [ "$status" = "200" ]; then
-            echo "Release ${tag} already exists. Reusing it."
-          elif [ "$status" = "404" ]; then
-            payload="$(mktemp)"
-            RELEASE_TAG="$tag" RELEASE_SHA="$sha" python3 - <<'PY' > "$payload"
-import json
-import os
-
-tag = os.environ["RELEASE_TAG"]
-sha = os.environ["RELEASE_SHA"]
-
-print(json.dumps({
-    "tag_name": tag,
-    "name": tag,
-    "target_commitish": sha,
-    "body": "本 Release 由 Gitea Actions 自动生成。\n\n请下载与你的系统和架构匹配的 ktui 二进制文件，并使用 checksums.txt 校验 SHA256。",
-    "draft": False,
-    "prerelease": "-" in tag,
-}))
-PY
-
-            status="$(curl -sS -o "$response" -w "%{http_code}" \
-              -X POST \
-              -H "Authorization: token ${GITEA_TOKEN}" \
-              -H "Accept: application/json" \
-              -H "Content-Type: application/json" \
-              --data-binary "@${payload}" \
-              "${api}/repos/${repo}/releases")"
-
-            if [ "$status" != "200" ] && [ "$status" != "201" ]; then
-              echo "Failed to create release. HTTP ${status}"
-              cat "$response"
-              exit 1
-            fi
-          else
-            echo "Failed to query release. HTTP ${status}"
-            cat "$response"
-            exit 1
-          fi
-
-          release_id="$(python3 - "$response" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as f:
-    print(json.load(f)["id"])
-PY
-)"
-
-          echo "release_id=${release_id}" >> "$GITHUB_OUTPUT"
-
-      - name: Upload release assets
-        shell: bash
-        env:
-          GITEA_TOKEN: ${{ secrets.GITEA_TOKEN }}
-          GITEA_API_URL: ${{ github.api_url }}
-          GITEA_REPOSITORY: ${{ github.repository }}
-          RELEASE_ID: ${{ steps.release.outputs.release_id }}
-        run: |
-          set -euo pipefail
-
-          api="${GITEA_API_URL:-${GITHUB_API_URL:-}}"
-          if [ -z "$api" ] && [ -n "${GITHUB_SERVER_URL:-}" ]; then
-            api="${GITHUB_SERVER_URL%/}/api/v1"
-          fi
-
-          api="${api%/}"
-          repo="${GITEA_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
-          assets_json="$(mktemp)"
-          delete_ids="$(mktemp)"
-
-          curl -fsS \
-            -H "Authorization: token ${GITEA_TOKEN}" \
-            -H "Accept: application/json" \
-            "${api}/repos/${repo}/releases/${RELEASE_ID}/assets" \
-            -o "$assets_json"
-
-          DIST_DIR="dist" python3 - "$assets_json" <<'PY' > "$delete_ids"
-import json
-import os
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as f:
-    assets = json.load(f)
-
-wanted = set(os.listdir(os.environ["DIST_DIR"]))
-
-for asset in assets:
-    if asset.get("name") in wanted and asset.get("id") is not None:
-        print(asset["id"])
-PY
-
-          while read -r asset_id; do
-            [ -n "$asset_id" ] || continue
-            echo "Deleting existing asset ${asset_id}"
-            curl -fsS -X DELETE \
-              -H "Authorization: token ${GITEA_TOKEN}" \
-              "${api}/repos/${repo}/releases/${RELEASE_ID}/assets/${asset_id}" >/dev/null
-          done < "$delete_ids"
-
-          for file in dist/*; do
-            name="$(basename "$file")"
-            echo "Uploading ${name}"
-            curl -fsS -X POST \
-              -H "Authorization: token ${GITEA_TOKEN}" \
-              -H "Accept: application/json" \
-              -F "attachment=@${file}" \
-              "${api}/repos/${repo}/releases/${RELEASE_ID}/assets?name=${name}" >/dev/null
-          done

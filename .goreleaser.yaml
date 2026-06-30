@@ -1,0 +1,71 @@
+version: 2
+
+project_name: ktui
+
+before:
+  hooks:
+    - go test ./...
+
+builds:
+  - id: ktui
+    main: ./cmd/ktui
+    binary: ktui
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+archives:
+  - id: ktui
+    ids:
+      - ktui
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+
+release:
+  gitea:
+    owner: gary
+    name: ktui
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    本 Release 由 GoReleaser 自动生成。
+
+    请下载与你的系统和架构匹配的 ktui 压缩包，并使用 checksums.txt 校验 SHA256。
+
+gitea_urls:
+  api: https://gitea.bytevibe.dev/api/v1
+  download: https://gitea.bytevibe.dev
+  skip_tls_verify: false
