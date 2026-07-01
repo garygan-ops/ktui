@@ -52,6 +52,19 @@ go run ./cmd/ktui
 ./ktui help keys
 ```
 
+查看当前版本：
+
+```sh
+./ktui version
+```
+
+检查或安装更新：
+
+```sh
+./ktui update --check
+./ktui update
+```
+
 指定 Komari 地址：
 
 ```sh
@@ -201,6 +214,40 @@ EXP -
 - `d`：打开或重新加载选中节点的详情数据
 - `a`：切换 ASCII 兼容模式
 - `q` / `Ctrl-C`：在列表页退出
+
+## 版本信息
+
+查看当前二进制版本：
+
+```sh
+ktui version
+```
+
+通过 GoReleaser 发布的二进制会显示 tag 版本、commit 和构建时间；本地直接 `go build` 的版本会显示为 `dev`。
+
+## 自更新
+
+`ktui update` 会从 Gitea Release 下载当前系统和架构对应的压缩包，使用 `checksums.txt` 校验后替换当前二进制。
+
+```sh
+ktui update --check
+ktui update
+ktui update --tag v0.1.0
+```
+
+默认更新源：
+
+```text
+https://gitea.bytevibe.dev/api/v1/repos/gary/ktui
+```
+
+如果仓库是私有仓库，可以通过环境变量传入 token：
+
+```sh
+KTUI_UPDATE_TOKEN=your_token ktui update
+```
+
+Windows 无法在程序运行时直接替换当前 `.exe`，`ktui update` 会下载新文件并提示手动替换。
 
 ## 详情页
 

@@ -33,3 +33,15 @@ func TestSplitConfigArgEqualsValue(t *testing.T) {
 		}
 	}
 }
+
+func TestLooksLikeCommand(t *testing.T) {
+	if !looksLikeCommand("add") {
+		t.Fatal("add should look like a command")
+	}
+	if looksLikeCommand("--sheet") {
+		t.Fatal("--sheet should not look like a command")
+	}
+	if looksLikeCommand("") {
+		t.Fatal("empty string should not look like a command")
+	}
+}

@@ -12,6 +12,13 @@ import (
 	"ktui/internal/config"
 	"ktui/internal/komari"
 	"ktui/internal/tui"
+	"ktui/internal/update"
+)
+
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
 )
 
 func main() {
@@ -20,6 +27,16 @@ func main() {
 		if err := os.Setenv("KTUI_CONFIG", configPath); err != nil {
 			fatal(err)
 		}
+	}
+	if len(args) > 0 && (args[0] == "version" || args[0] == "--version" || args[0] == "-v") {
+		printVersion()
+		return
+	}
+	if len(args) > 0 && args[0] == "update" {
+		if err := handleUpdate(args[1:]); err != nil {
+			fatal(err)
+		}
+		return
 	}
 	if len(args) > 0 && args[0] == "config" {
 		if err := handleConfig(args[1:]); err != nil {
@@ -32,6 +49,9 @@ func main() {
 			fatal(err)
 		}
 		return
+	}
+	if len(args) > 0 && looksLikeCommand(args[0]) {
+		usageError(fmt.Errorf("unknown command %q", args[0]))
 	}
 
 	cfg, cfgPath, err := config.Load()
@@ -79,6 +99,9 @@ func main() {
 	flags.Usage = printHelp
 	if err := flags.Parse(args); err != nil {
 		fatal(err)
+	}
+	if flags.NArg() > 0 {
+		usageError(fmt.Errorf("unexpected argument %q", flags.Arg(0)))
 	}
 
 	mode := tui.ModeSheet
@@ -222,7 +245,7 @@ func handleConfig(args []string) error {
 
 func handleHelp(args []string) error {
 	if len(args) > 1 {
-		return fmt.Errorf("usage: ktui help [config|keys]")
+		return fmt.Errorf("usage: ktui help [config|keys|update]")
 	}
 	if len(args) == 0 {
 		printHelp()
@@ -233,19 +256,49 @@ func handleHelp(args []string) error {
 		printConfigHelp()
 	case "keys":
 		printKeysHelp()
+	case "update":
+		printUpdateHelp()
 	default:
 		return fmt.Errorf("unknown help topic %q", args[0])
 	}
 	return nil
 }
 
+func handleUpdate(args []string) error {
+	fs := flag.NewFlagSet("ktui update", flag.ExitOnError)
+	checkOnly := fs.Bool("check", false, "check whether an update is available without installing it")
+	targetTag := fs.String("tag", "", "install a specific release tag instead of the latest release")
+	apiURL := fs.String("api-url", update.DefaultAPIBaseURL, "Gitea repository API URL")
+	timeout := fs.Duration("timeout", 60*time.Second, "update HTTP timeout")
+	fs.Usage = printUpdateHelp
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected update argument %q", fs.Arg(0))
+	}
+	return update.Run(context.Background(), update.Options{
+		APIBaseURL:     *apiURL,
+		CurrentVersion: version,
+		TargetVersion:  *targetTag,
+		CheckOnly:      *checkOnly,
+		Timeout:        *timeout,
+		Stdout:         os.Stdout,
+	})
+}
+
 func printHelp() {
-	fmt.Print(`ktui - Komari terminal UI
+	fmt.Print(helpText)
+}
+
+const helpText = `ktui - Komari terminal UI
 
 Usage:
   ktui [flags]
+  ktui version
+  ktui update [--check] [--tag v0.1.0]
   ktui config <path|init|show|set|help>
-  ktui help [config|keys]
+  ktui help [config|keys|update]
 
 Flags:
   --url URL          Komari base URL
@@ -263,10 +316,46 @@ Examples:
   ktui
   ktui --sheet
   ktui --line --ascii --no-color
+  ktui version
+  ktui update --check
   ktui config init
   ktui config set api-key your_api_key
   ktui help keys
-`)
+`
+
+func printVersion() {
+	fmt.Printf("ktui %s\n", version)
+	fmt.Printf("commit: %s\n", commit)
+	fmt.Printf("built:  %s\n", date)
+}
+
+func printUpdateHelp() {
+	fmt.Printf(`ktui update - update ktui from Gitea Releases
+
+Usage:
+  ktui update [flags]
+
+Flags:
+  --check          check for an update without installing it
+  --tag TAG        install a specific release tag, for example v0.1.0
+  --api-url URL    Gitea repository API URL
+  --timeout 60s    HTTP timeout
+
+Default API URL:
+  %s
+
+Examples:
+  ktui update --check
+  ktui update
+  ktui update --tag v0.1.0
+
+Private repositories:
+  KTUI_UPDATE_TOKEN=your_token ktui update
+`, update.DefaultAPIBaseURL)
+}
+
+func looksLikeCommand(arg string) bool {
+	return arg != "" && !strings.HasPrefix(arg, "-")
 }
 
 func printConfigHelp() {
@@ -352,6 +441,13 @@ func splitConfigArg(args []string) ([]string, string) {
 
 func fatal(err error) {
 	fmt.Fprintln(os.Stderr, "ktui:", err)
+	os.Exit(1)
+}
+
+func usageError(err error) {
+	fmt.Fprintln(os.Stderr, "ktui:", err)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprint(os.Stderr, helpText)
 	os.Exit(1)
 }
 
