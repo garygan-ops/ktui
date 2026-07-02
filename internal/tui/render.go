@@ -40,13 +40,31 @@ func (a *App) render() {
 		lines = append(lines, a.renderSettingsBody(drawWidth, bodyHeight)...)
 	} else if a.detail {
 		lines = append(lines, a.renderDetailBody(drawWidth, bodyHeight)...)
-	} else if a.mode == ModeLine {
-		lines = append(lines, a.renderLineBody(drawWidth, bodyHeight)...)
 	} else {
-		lines = append(lines, a.renderSheetBody(drawWidth, bodyHeight)...)
+		lines = append(lines, a.renderListBody(drawWidth, bodyHeight)...)
 	}
 
 	lines = append(lines, a.footerLine(drawWidth))
 	a.writeFrame(&b, width, height, lines)
 	fmt.Print(b.String())
+}
+
+func (a *App) renderListBody(width int, bodyHeight int) []string {
+	if bodyHeight <= 0 {
+		return nil
+	}
+	remaining := bodyHeight
+	lines := make([]string, 0, bodyHeight)
+	if a.listSearchVisible() {
+		lines = append(lines, a.listSearchLine(width))
+		remaining--
+	}
+	if remaining > 0 {
+		if a.mode == ModeLine {
+			lines = append(lines, a.renderLineBody(width, remaining)...)
+		} else {
+			lines = append(lines, a.renderSheetBody(width, remaining)...)
+		}
+	}
+	return fillBody(lines, width, bodyHeight)
 }

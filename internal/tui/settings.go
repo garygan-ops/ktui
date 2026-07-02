@@ -24,6 +24,10 @@ const (
 	settingsChartYAxis
 	settingsASCII
 	settingsNoColor
+	settingsWarnCPU
+	settingsWarnRAM
+	settingsWarnDisk
+	settingsWarnExpiryDays
 )
 
 func (a *App) renderSettingsBody(width int, bodyHeight int) []string {
@@ -68,6 +72,10 @@ func (a *App) settingsItems() []settingsItem {
 		{Label: "chart_y_axis", Value: a.chartYAxisModeText(), Kind: settingsChartYAxis},
 		{Label: "ascii", Value: boolText(a.style.ASCII), Kind: settingsASCII},
 		{Label: "no_color", Value: boolText(a.style.NoColor), Kind: settingsNoColor},
+		{Label: "warn_cpu", Value: percentSettingText(a.warnCPU), Kind: settingsWarnCPU},
+		{Label: "warn_ram", Value: percentSettingText(a.warnRAM), Kind: settingsWarnRAM},
+		{Label: "warn_disk", Value: percentSettingText(a.warnDisk), Kind: settingsWarnDisk},
+		{Label: "warn_expiry_days", Value: fmt.Sprintf("%d", a.warnExpiryDays), Kind: settingsWarnExpiryDays},
 	}
 }
 
@@ -150,6 +158,14 @@ func (a *App) adjustSelectedSetting(delta int) {
 		a.style.ASCII = !a.style.ASCII
 	case settingsNoColor:
 		a.style.NoColor = !a.style.NoColor
+	case settingsWarnCPU:
+		a.warnCPU = adjustedPercent(a.warnCPU, delta)
+	case settingsWarnRAM:
+		a.warnRAM = adjustedPercent(a.warnRAM, delta)
+	case settingsWarnDisk:
+		a.warnDisk = adjustedPercent(a.warnDisk, delta)
+	case settingsWarnExpiryDays:
+		a.warnExpiryDays = adjustedExpiryDays(a.warnExpiryDays, delta)
 	}
 	a.persistSettings()
 }
@@ -167,6 +183,10 @@ func (a *App) persistSettings() {
 		ChartYAxisMode: string(a.chartYAxisMode),
 		ASCII:          a.style.ASCII,
 		NoColor:        a.style.NoColor,
+		WarnCPU:        a.warnCPU,
+		WarnRAM:        a.warnRAM,
+		WarnDisk:       a.warnDisk,
+		WarnExpiryDays: a.warnExpiryDays,
 	})
 	if err != nil {
 		a.settingsStatus = "save failed: " + err.Error()
@@ -219,6 +239,48 @@ func adjustedRealtimePoints(current int, delta int) int {
 	return presets[0]
 }
 
+func adjustedPercent(current float64, delta int) float64 {
+	presets := []float64{50, 60, 70, 75, 80, 85, 90, 95, 100}
+	if delta == 0 {
+		delta = 1
+	}
+	if delta > 0 {
+		for _, preset := range presets {
+			if preset > current {
+				return preset
+			}
+		}
+		return presets[len(presets)-1]
+	}
+	for i := len(presets) - 1; i >= 0; i-- {
+		if presets[i] < current {
+			return presets[i]
+		}
+	}
+	return presets[0]
+}
+
+func adjustedExpiryDays(current int, delta int) int {
+	presets := []int{1, 3, 7, 14, 30, 60, 90}
+	if delta == 0 {
+		delta = 1
+	}
+	if delta > 0 {
+		for _, preset := range presets {
+			if preset > current {
+				return preset
+			}
+		}
+		return presets[len(presets)-1]
+	}
+	for i := len(presets) - 1; i >= 0; i-- {
+		if presets[i] < current {
+			return presets[i]
+		}
+	}
+	return presets[0]
+}
+
 func (a *App) toggleChartYAxisMode() {
 	if a.chartYAxisMode == chartYAxisRelative {
 		a.chartYAxisMode = chartYAxisAbsolute
@@ -239,4 +301,11 @@ func boolText(value bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func percentSettingText(value float64) string {
+	if value == float64(int(value)) {
+		return fmt.Sprintf("%.0f%%", value)
+	}
+	return fmt.Sprintf("%.1f%%", value)
 }

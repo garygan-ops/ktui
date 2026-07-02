@@ -21,9 +21,9 @@ func TestSettingsKeyOpensSettingsPage(t *testing.T) {
 		t.Fatal("settings page was not opened")
 	}
 
-	lines := app.renderSettingsBody(80, 12)
+	lines := app.renderSettingsBody(80, 18)
 	joined := strings.Join(lines, "\n")
-	for _, label := range []string{"url", "api_key", "interval", "timeout", "mode", "realtime_points", "chart_y_axis", "ascii", "no_color"} {
+	for _, label := range []string{"url", "api_key", "interval", "timeout", "mode", "realtime_points", "chart_y_axis", "ascii", "no_color", "warn_cpu", "warn_ram", "warn_disk", "warn_expiry_days"} {
 		if !strings.Contains(joined, label) {
 			t.Fatalf("settings body missing %s: %#v", label, lines)
 		}
@@ -37,7 +37,7 @@ func TestSettingsItemsIncludeAllConfigFields(t *testing.T) {
 	for _, item := range items {
 		got = append(got, item.Label)
 	}
-	want := []string{"url", "api_key", "interval", "timeout", "mode", "realtime_points", "chart_y_axis", "ascii", "no_color"}
+	want := []string{"url", "api_key", "interval", "timeout", "mode", "realtime_points", "chart_y_axis", "ascii", "no_color", "warn_cpu", "warn_ram", "warn_disk", "warn_expiry_days"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("settings labels = %#v, want %#v", got, want)
 	}
@@ -120,6 +120,18 @@ func TestSettingsAdjustConfigFields(t *testing.T) {
 	if !app.style.NoColor || !saved.NoColor {
 		t.Fatalf("no_color = %t saved=%t, want true", app.style.NoColor, saved.NoColor)
 	}
+
+	selectSetting(t, app, "warn_cpu")
+	app.handleSettingsKey(keyEvent{name: "tab-right"})
+	if app.warnCPU != 95 || saved.WarnCPU != 95 {
+		t.Fatalf("warn_cpu = %.1f saved=%.1f, want 95", app.warnCPU, saved.WarnCPU)
+	}
+
+	selectSetting(t, app, "warn_expiry_days")
+	app.handleSettingsKey(keyEvent{name: "tab-right"})
+	if app.warnExpiryDays != 14 || saved.WarnExpiryDays != 14 {
+		t.Fatalf("warn_expiry_days = %d saved=%d, want 14", app.warnExpiryDays, saved.WarnExpiryDays)
+	}
 }
 
 func TestSettingsBodyContainsCoreEditableItems(t *testing.T) {
@@ -185,6 +197,25 @@ func TestSettingsPersistAfterAdjustment(t *testing.T) {
 	app.handleSettingsKey(keyEvent{name: "open"})
 	if saved.ChartYAxisMode != "relative" {
 		t.Fatalf("saved ChartYAxisMode = %q, want relative", saved.ChartYAxisMode)
+	}
+	if app.settingsStatus != "saved" {
+		t.Fatalf("settingsStatus = %q, want saved", app.settingsStatus)
+	}
+}
+
+func TestSettingsASCIIShortcutPersists(t *testing.T) {
+	var saved PersistentSettings
+	app := NewWithOptions(nil, Options{
+		SaveSettings: func(settings PersistentSettings) error {
+			saved = settings
+			return nil
+		},
+	})
+	app.settings = true
+
+	app.handleSettingsKey(keyEvent{name: "ascii"})
+	if !app.style.ASCII || !saved.ASCII {
+		t.Fatalf("ascii = %t saved=%t, want true", app.style.ASCII, saved.ASCII)
 	}
 	if app.settingsStatus != "saved" {
 		t.Fatalf("settingsStatus = %q, want saved", app.settingsStatus)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"ktui/internal/komari"
 )
@@ -65,6 +66,26 @@ func TestMouseClickLineOpensNodeDetail(t *testing.T) {
 	}
 }
 
+func TestMouseClickLineWithSearchBarOpensCorrectNode(t *testing.T) {
+	app := NewWithOptions(nil, Options{Mode: ModeLine})
+	app.searchQuery = "o"
+	app.snapshot = komari.Snapshot{
+		Nodes: []komari.Node{
+			{UUID: "n1", Name: "one"},
+			{UUID: "n2", Name: "two"},
+		},
+		Status: map[string]komari.Status{},
+	}
+
+	app.handleKey(context.Background(), keyEvent{name: "mouse-left", x: 2, y: mouseHeaderRows + app.listSearchRows() + lineHeaderRows + 2})
+	if app.selected != 1 {
+		t.Fatalf("selected = %d, want 1", app.selected)
+	}
+	if !app.detail {
+		t.Fatal("clicking a node should open detail view")
+	}
+}
+
 func TestMouseClickDetailFooterBackReturnsToList(t *testing.T) {
 	app := NewWithOptions(nil, Options{})
 	app.detail = true
@@ -84,46 +105,120 @@ func TestMouseClickDetailFooterBackReturnsToList(t *testing.T) {
 	}
 }
 
+func TestMouseClickDetailChartOpensFocus(t *testing.T) {
+	app := NewWithOptions(nil, Options{ASCII: true})
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	node := komari.Node{UUID: "n1", Name: "one", MemTotal: 1000, DiskTotal: 2000}
+	app.snapshot = komari.Snapshot{
+		Nodes:  []komari.Node{node},
+		Status: map[string]komari.Status{node.UUID: {CPU: 30, Time: komari.NullTime{Time: now, Valid: true}}},
+	}
+	app.detail = true
+	app.tab = 2
+
+	app.handleKey(context.Background(), keyEvent{name: "mouse-left", x: 2, y: mouseHeaderRows + 5})
+	if !app.chartFocus {
+		t.Fatal("clicking chart card should open chart focus")
+	}
+}
+
+func TestMouseClickChartFocusFooterActions(t *testing.T) {
+	app := NewWithOptions(nil, Options{ASCII: true})
+	node := komari.Node{UUID: "n1", Name: "one", MemTotal: 1000, DiskTotal: 2000}
+	app.snapshot = komari.Snapshot{
+		Nodes:  []komari.Node{node},
+		Status: map[string]komari.Status{node.UUID: {CPU: 30}},
+	}
+	app.detail = true
+	app.tab = 2
+	app.focusChart(0)
+	_, height := terminalSize()
+
+	x, _, ok := footerLabelBounds(app.footerText(), "l next")
+	if !ok {
+		t.Fatal("missing next footer label")
+	}
+	app.handleKey(context.Background(), keyEvent{name: "mouse-left", x: x, y: height})
+	if app.chartFocusIndex != 1 {
+		t.Fatalf("chartFocusIndex = %d, want 1", app.chartFocusIndex)
+	}
+
+	x, _, ok = footerLabelBounds(app.footerText(), "Esc/q back")
+	if !ok {
+		t.Fatal("missing focus back footer label")
+	}
+	app.handleKey(context.Background(), keyEvent{name: "mouse-left", x: x, y: height})
+	if app.chartFocus {
+		t.Fatal("clicking chart focus back should close focus")
+	}
+}
+
 func TestMouseClickListFooterActions(t *testing.T) {
 	app := NewWithOptions(nil, Options{})
 	_, height := terminalSize()
 
-	clickFooterLabel := func(label string) {
+	clickFooterAction := func(action footerAction) {
 		t.Helper()
-		x, _, ok := footerLabelBounds(app.footerText(), label)
+		x, ok := footerActionPosition(app, action)
 		if !ok {
-			t.Fatalf("missing footer label %q in %q", label, app.footerText())
+			t.Fatalf("missing footer action %q in %q", action, app.footerText())
 		}
 		app.handleKey(context.Background(), keyEvent{name: "mouse-left", x: x, y: height})
 	}
 
-	clickFooterLabel("s settings")
+	clickFooterAction(footerSettings)
 	if !app.settings {
 		t.Fatal("clicking settings footer action should open settings")
 	}
 	app.closeSettings()
 
-	clickFooterLabel("m mode")
+	clickFooterAction(footerMode)
 	if app.mode != ModeLine {
 		t.Fatalf("mode = %s, want line", app.mode)
 	}
 
-	clickFooterLabel("r refresh")
+	clickFooterAction(footerRefresh)
 	select {
 	case <-app.refreshCh:
 	default:
 		t.Fatal("clicking refresh footer action should request refresh")
 	}
 
-	clickFooterLabel("a ascii")
+	clickFooterAction(footerASCII)
 	if !app.style.ASCII {
 		t.Fatal("clicking ascii footer action should toggle ASCII mode")
 	}
 
-	clickFooterLabel("q quit")
+	clickFooterAction(footerQuit)
 	if !app.quit {
 		t.Fatal("clicking quit footer action should set quit")
 	}
+}
+
+func footerActionPosition(app *App, action footerAction) (int, bool) {
+	width, _ := terminalSize()
+	drawWidth := width
+	if drawWidth > 1 {
+		drawWidth--
+	}
+	variant := app.footerVariantForWidth(drawWidth)
+	pos := 2
+	for _, item := range app.footerItems() {
+		label := item.Labels[variant]
+		end := pos + displayWidth(label) - 1
+		if item.Action == action {
+			return pos, true
+		}
+		pos = end + 1
+		if variant == 0 {
+			pos += 3
+		} else if variant == 1 {
+			pos += 2
+		} else {
+			pos++
+		}
+	}
+	return 0, false
 }
 
 func TestFooterFoldsInsteadOfClippingActions(t *testing.T) {
@@ -133,7 +228,7 @@ func TestFooterFoldsInsteadOfClippingActions(t *testing.T) {
 	if displayWidth(footer) > 24 {
 		t.Fatalf("footer width = %d, want <= 24: %q", displayWidth(footer), footer)
 	}
-	for _, label := range []string{"J", "O", "S", "M", "R", "A", "Q", "U"} {
+	for _, label := range []string{"J", "O", "/", "C", "V", "S", "M", "R", "A", "Q", "U"} {
 		if !strings.Contains(footer, label) {
 			t.Fatalf("folded footer %q missing %q", footer, label)
 		}

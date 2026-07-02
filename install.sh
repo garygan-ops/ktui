@@ -42,16 +42,48 @@ detect_arch() {
 }
 
 json_value() {
-	printf '%s' "$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n 1
+	if command -v jq >/dev/null 2>&1; then
+		printf '%s' "$1" | jq -r --arg key "$2" '.[$key] // empty' | head -n 1
+	else
+		printf '%s' "$1" | sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -n 1
+	fi
+}
+
+release_asset_name() {
+	suffix="_${os}_${arch}.tar.gz"
+	if command -v jq >/dev/null 2>&1; then
+		printf '%s' "$release_json" |
+			jq -r --arg suffix "$suffix" '
+				.assets[]? |
+				select((.name // "") | startswith("ktui_") and endswith($suffix)) |
+				.name
+			' |
+			head -n 1
+	else
+		printf '%s' "$release_json" |
+			tr '{' '\n' |
+			sed -n "s/.*\"name\"[[:space:]]*:[[:space:]]*\"\(ktui_[^\"]*_${os}_${arch}\.tar\.gz\)\".*/\1/p" |
+			head -n 1
+	fi
 }
 
 asset_url() {
 	name="$1"
-	printf '%s' "$release_json" |
-		tr '{' '\n' |
-		grep "\"name\"[[:space:]]*:[[:space:]]*\"$name\"" |
-		sed -n 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
-		head -n 1
+	if command -v jq >/dev/null 2>&1; then
+		printf '%s' "$release_json" |
+			jq -r --arg name "$name" '
+				.assets[]? |
+				select(.name == $name) |
+				.browser_download_url // empty
+			' |
+			head -n 1
+	else
+		printf '%s' "$release_json" |
+			tr '{' '\n' |
+			grep "\"name\"[[:space:]]*:[[:space:]]*\"$name\"" |
+			sed -n 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+			head -n 1
+	fi
 }
 
 checksum_for() {
@@ -85,8 +117,10 @@ verify_sha256() {
 need curl
 need tar
 need awk
-need sed
-need grep
+if ! command -v jq >/dev/null 2>&1; then
+	need sed
+	need grep
+fi
 
 os="$(detect_os)"
 arch="$(detect_arch)"
@@ -102,10 +136,7 @@ release_json="$(http_get "$endpoint")"
 tag="$(json_value "$release_json" tag_name)"
 [ -n "$tag" ] || fail "release response does not include tag_name"
 
-asset_name="$(printf '%s' "$release_json" |
-	tr '{' '\n' |
-	sed -n "s/.*\"name\"[[:space:]]*:[[:space:]]*\"\(ktui_[^\"]*_${os}_${arch}\.tar\.gz\)\".*/\1/p" |
-	head -n 1)"
+asset_name="$(release_asset_name)"
 [ -n "$asset_name" ] || fail "release $tag does not contain an asset for $os/$arch"
 
 archive_url="$(asset_url "$asset_name")"

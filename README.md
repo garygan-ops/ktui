@@ -2,7 +2,7 @@
 
 `ktui` 是一个用于查看 [Komari](https://github.com/komari-monitor/komari) 探针监控状态的终端 TUI 工具。它可以让你不用打开浏览器，直接在终端里查看服务器在线状态、资源占用、流量、Ping、节点详情和历史趋势。
 
-`ktui` 不内置默认 Komari 地址。首次使用前需要通过配置文件、环境变量或命令行参数设置你的 Komari 实例地址。
+`ktui` 不内置默认 Komari 地址。首次启动且未配置 URL 时，会在终端中引导输入 Komari 地址和可选 API key，并保存到配置文件。
 
 ## 灵感来源
 
@@ -20,6 +20,7 @@ https://www.nodeseek.com/post-710243-1
 - 详情页标签：`overview`、`node`、`history`、`ping`、`meta`
 - 历史窗口：`realtime`、`4h`、`1d`、`7d`、`30d`
 - History 坐标图：CPU、RAM、磁盘、网络、连接数、进程数
+- 详情页图表聚焦模式：点击图表或按 `f` 可用整页查看单张图
 - Ping 数据：实时 Ping 和历史 Ping 汇总
 - 支持 Komari API key，能读取 IPv4、IPv6、过期时间等后台节点详情
 - 支持配置文件，默认持久化到系统用户配置目录
@@ -131,7 +132,7 @@ ktui update
 ./ktui config init
 ```
 
-首次使用建议先设置 URL：
+首次启动未配置 URL 时会自动进入引导。也可以提前手动设置 URL：
 
 ```sh
 ./ktui config set url https://komari.example.com
@@ -175,6 +176,10 @@ KTUI_CONFIG=/path/to/config.json ./ktui
   "timeout": "10s",
   "realtime_points": 0,
   "chart_y_axis": "absolute",
+  "warn_cpu": 90,
+  "warn_ram": 85,
+  "warn_disk": 90,
+  "warn_expiry_days": 7,
   "mode": "sheet",
   "ascii": false,
   "no_color": false
@@ -195,6 +200,8 @@ KTUI_API_KEY=your_api_key ./ktui
 KTUI_MODE=line ./ktui
 KTUI_REALTIME_POINTS=150 ./ktui
 KTUI_CHART_Y_AXIS=relative ./ktui
+KTUI_WARN_CPU=85 KTUI_WARN_DISK=90 ./ktui
+KTUI_WARN_EXPIRY_DAYS=14 ./ktui
 KTUI_ASCII=1 NO_COLOR=1 ./ktui
 ```
 
@@ -250,6 +257,10 @@ EXP -
 - `↓` / `j`：列表页选择下一个节点；详情页向下滚动一张卡片
 - 鼠标/触控板滚轮：列表页切换选择；详情页滚动；设置页切换设置项
 - 鼠标点击：列表页打开节点详情；底部命令可直接点击；详情页点击底部 `Back` 返回，点击标签/时间窗口切换；设置页选择设置项并可点击底部调整/返回
+- `/`：编辑节点搜索，匹配名称、地区、标签、分组、IP、OS 和 UUID；`Enter` 应用，`Esc` 取消
+- `c`：循环排序：默认、在线状态、CPU、RAM、累计流量、过期时间
+- `v`：循环过滤：全部、离线、即将过期、高负载
+- 详情页图表：点击图表或按 `f` 聚焦，`h` / `l` 或 `PgUp` / `PgDn` 切换聚焦图表，`Esc` / `b` / `q` / `Enter` 返回详情页
 - `PgUp` / `PgDn`：快速滚动列表或详情页
 - `Enter` / `o`：打开选中节点的详情页
 - `Esc` / `b` / `q`：从详情页返回列表页
@@ -261,6 +272,8 @@ EXP -
 - `a`：切换 ASCII 兼容模式
 - `u`：有新版本时显示更新命令
 - `q` / `Ctrl-C`：在列表页退出
+
+异常高亮阈值可以通过配置文件、`ktui config set warn-cpu 85`、`ktui config set warn-ram 85`、`ktui config set warn-disk 90`、`ktui config set warn-expiry-days 14` 或设置页调整。
 
 ## 版本信息
 

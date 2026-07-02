@@ -413,7 +413,7 @@ func compactByteFloat(value float64) string {
 	}
 }
 
-func chartXAxisLine(from, to string, width int, labelWidth int, ascii bool) string {
+func chartXAxisLines(chart axisChart, width int, labelWidth int, ascii bool, detailed bool) []string {
 	prefix := strings.Repeat(" ", labelWidth)
 	if ascii {
 		prefix += "+"
@@ -426,11 +426,148 @@ func chartXAxisLine(from, to string, width int, labelWidth int, ascii bool) stri
 		axis = strings.Repeat("─", plotWidth)
 	}
 	line := prefix + axis
-	label := from + " -> " + to
+	if detailed {
+		if labels := chartDetailedXAxisLabels(chart, plotWidth); len(labels) > 0 {
+			return []string{
+				cleanLine(prefix+placeAxisTicks(labels, plotWidth, ascii), width),
+				cleanLine(strings.Repeat(" ", displayWidth(prefix))+placeAxisLabels(labels, plotWidth), width),
+			}
+		}
+	}
+	label := chart.From + " -> " + chart.To
 	if displayWidth(label) <= plotWidth {
 		line = prefix + padRight(label, plotWidth)
 	}
-	return cleanLine(line, width)
+	return []string{cleanLine(line, width)}
+}
+
+type chartAxisLabel struct {
+	Pos   int
+	Label string
+}
+
+func chartDetailedXAxisLabels(chart axisChart, plotWidth int) []chartAxisLabel {
+	from, to, ok := chartTimeRange(chart)
+	if !ok || plotWidth < 8 {
+		return nil
+	}
+	count := detailedXAxisTickCount(plotWidth, chartAxisTimeLayout(to.Sub(from)))
+	if count < 2 {
+		return nil
+	}
+	labels := make([]chartAxisLabel, 0, count)
+	layout := chartAxisTimeLayout(to.Sub(from))
+	for i := 0; i < count; i++ {
+		ratio := 0.0
+		if count > 1 {
+			ratio = float64(i) / float64(count-1)
+		}
+		ts := from.Add(time.Duration(float64(to.Sub(from)) * ratio))
+		pos := int(math.Round(ratio * float64(plotWidth-1)))
+		labels = append(labels, chartAxisLabel{Pos: pos, Label: ts.Local().Format(layout)})
+	}
+	return labels
+}
+
+func chartDetailedXAxisLabel(chart axisChart) string {
+	from, to, ok := chartTimeRange(chart)
+	if !ok {
+		return chart.From + " -> " + chart.To
+	}
+	layout := chartAxisTimeLayout(to.Sub(from))
+	return from.Local().Format(layout) + " -> " + to.Local().Format(layout)
+}
+
+func chartTimeRange(chart axisChart) (time.Time, time.Time, bool) {
+	if chart.Window > 0 && !chart.Until.IsZero() {
+		return chart.Until.Add(-chart.Window), chart.Until, true
+	}
+	var from time.Time
+	var to time.Time
+	for _, ts := range chart.Times {
+		if ts.IsZero() {
+			continue
+		}
+		if from.IsZero() || ts.Before(from) {
+			from = ts
+		}
+		if to.IsZero() || ts.After(to) {
+			to = ts
+		}
+	}
+	if from.IsZero() || to.IsZero() {
+		return time.Time{}, time.Time{}, false
+	}
+	return from, to, true
+}
+
+func chartAxisTimeLayout(span time.Duration) string {
+	if span <= 2*time.Hour {
+		return "15:04:05"
+	}
+	return "15:04"
+}
+
+func detailedXAxisTickCount(plotWidth int, layout string) int {
+	labelWidth := len(time.Date(2026, 7, 2, 15, 4, 5, 0, time.Local).Format(layout))
+	count := plotWidth / (labelWidth + 2)
+	if count < 2 {
+		return 2
+	}
+	if count > 9 {
+		return 9
+	}
+	return count
+}
+
+func placeAxisTicks(labels []chartAxisLabel, plotWidth int, ascii bool) string {
+	tick := '|'
+	if !ascii {
+		tick = '│'
+	}
+	fill := '-'
+	if !ascii {
+		fill = '─'
+	}
+	cells := make([]rune, plotWidth)
+	for i := range cells {
+		cells[i] = fill
+	}
+	for _, item := range labels {
+		if item.Pos >= 0 && item.Pos < plotWidth {
+			cells[item.Pos] = tick
+		}
+	}
+	return string(cells)
+}
+
+func placeAxisLabels(labels []chartAxisLabel, plotWidth int) string {
+	cells := make([]byte, plotWidth)
+	for i := range cells {
+		cells[i] = ' '
+	}
+	lastEnd := -1
+	for _, item := range labels {
+		if item.Label == "" {
+			continue
+		}
+		start := item.Pos - displayWidth(item.Label)/2
+		if start < 0 {
+			start = 0
+		}
+		if end := start + displayWidth(item.Label); end > plotWidth {
+			start = plotWidth - displayWidth(item.Label)
+		}
+		if start <= lastEnd+1 {
+			start = lastEnd + 2
+		}
+		if start < 0 || start+displayWidth(item.Label) > plotWidth {
+			continue
+		}
+		copy(cells[start:], item.Label)
+		lastEnd = start + displayWidth(item.Label) - 1
+	}
+	return string(cells)
 }
 
 func appendStatusSample(records []komari.Status, current komari.Status) []komari.Status {

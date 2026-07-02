@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -130,7 +132,16 @@ func main() {
 		mode = tui.ModeSheet
 	}
 	if strings.TrimSpace(baseURL) == "" {
-		fatal(fmt.Errorf("Komari URL is not set. Run `ktui config set url https://your-komari.example.com` or pass `--url https://your-komari.example.com`"))
+		if !isInteractiveTerminal(os.Stdin) {
+			fatal(fmt.Errorf("Komari URL is not set. Run `ktui config set url https://your-komari.example.com` or pass `--url https://your-komari.example.com`"))
+		}
+		cfg.APIKey = apiKey
+		next, err := firstRunSetup(cfg, os.Stdin, os.Stdout)
+		if err != nil {
+			fatal(err)
+		}
+		baseURL = next.URL
+		apiKey = next.APIKey
 	}
 
 	client, err := komari.NewClientWithOptions(baseURL, komari.Options{APIKey: apiKey, Timeout: timeout})
@@ -157,6 +168,10 @@ func main() {
 		DetailTimeout:   timeout,
 		RealtimePoints:  realtimePoints,
 		ChartYAxisMode:  chartYAxis,
+		WarnCPU:         cfg.WarnCPU,
+		WarnRAM:         cfg.WarnRAM,
+		WarnDisk:        cfg.WarnDisk,
+		WarnExpiryDays:  cfg.WarnExpiryDays,
 		SaveSettings:    saveTUISettings,
 		CheckUpdate:     checkSoftwareUpdate,
 		ASCII:           ascii,
@@ -192,6 +207,34 @@ func applyEnv(cfg config.Config) config.Config {
 	if value := os.Getenv("KTUI_CHART_Y_AXIS"); value != "" {
 		cfg.ChartYAxis = strings.ToLower(strings.TrimSpace(value))
 	}
+	if value := os.Getenv("KTUI_WARN_CPU"); value != "" {
+		if parsed, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(value), "%"), 64); err == nil {
+			cfg.WarnCPU = parsed
+		} else {
+			cfg.WarnCPU = -1
+		}
+	}
+	if value := os.Getenv("KTUI_WARN_RAM"); value != "" {
+		if parsed, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(value), "%"), 64); err == nil {
+			cfg.WarnRAM = parsed
+		} else {
+			cfg.WarnRAM = -1
+		}
+	}
+	if value := os.Getenv("KTUI_WARN_DISK"); value != "" {
+		if parsed, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(value), "%"), 64); err == nil {
+			cfg.WarnDisk = parsed
+		} else {
+			cfg.WarnDisk = -1
+		}
+	}
+	if value := os.Getenv("KTUI_WARN_EXPIRY_DAYS"); value != "" {
+		if parsed, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+			cfg.WarnExpiryDays = parsed
+		} else {
+			cfg.WarnExpiryDays = -1
+		}
+	}
 	if value := os.Getenv("KTUI_MODE"); value != "" {
 		cfg.Mode = value
 	}
@@ -216,8 +259,79 @@ func saveTUISettings(settings tui.PersistentSettings) error {
 	cfg.ChartYAxis = settings.ChartYAxisMode
 	cfg.ASCII = settings.ASCII
 	cfg.NoColor = settings.NoColor
+	cfg.WarnCPU = settings.WarnCPU
+	cfg.WarnRAM = settings.WarnRAM
+	cfg.WarnDisk = settings.WarnDisk
+	cfg.WarnExpiryDays = settings.WarnExpiryDays
 	_, err = config.Save(cfg)
 	return err
+}
+
+func firstRunSetup(cfg config.Config, input io.Reader, output io.Writer) (config.Config, error) {
+	reader := bufio.NewReader(input)
+	fmt.Fprintln(output, "ktui first run setup")
+	fmt.Fprintln(output, "Komari URL is required before opening the TUI.")
+	baseURL, err := promptLine(reader, output, "Komari URL: ")
+	if err != nil {
+		return cfg, err
+	}
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" {
+		return cfg, fmt.Errorf("Komari URL is required")
+	}
+	client, err := komari.NewClientWithOptions(baseURL, komari.Options{})
+	if err != nil {
+		return cfg, err
+	}
+	apiKey, err := promptSecretLine(reader, input, output, "API key (optional): ")
+	if err != nil && err != io.EOF {
+		return cfg, err
+	}
+	cfg.URL = client.BaseURL()
+	if strings.TrimSpace(apiKey) != "" {
+		cfg.APIKey = strings.TrimSpace(apiKey)
+	}
+	cfg = cfg.WithDefaults()
+	if err := cfg.Validate(); err != nil {
+		return cfg, err
+	}
+	path, err := config.Save(cfg)
+	if err != nil {
+		return cfg, err
+	}
+	fmt.Fprintf(output, "Saved config: %s\n", path)
+	return cfg, nil
+}
+
+func promptLine(reader *bufio.Reader, output io.Writer, prompt string) (string, error) {
+	fmt.Fprint(output, prompt)
+	value, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+	if err == io.EOF && value == "" {
+		return "", io.EOF
+	}
+	return strings.TrimRight(value, "\r\n"), nil
+}
+
+func promptSecretLine(reader *bufio.Reader, input io.Reader, output io.Writer, prompt string) (string, error) {
+	file, ok := input.(*os.File)
+	if !ok || reader.Buffered() > 0 || !isInteractiveTerminal(file) {
+		return promptLine(reader, output, prompt)
+	}
+	fmt.Fprint(output, prompt)
+	value, err := readSecretFromTerminal(file)
+	fmt.Fprintln(output)
+	return value, err
+}
+
+func isInteractiveTerminal(file *os.File) bool {
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
 
 func checkSoftwareUpdate(ctx context.Context) (tui.UpdateCheckResult, error) {
@@ -454,9 +568,14 @@ Keys:
   timeout   HTTP timeout, for example 10s
   realtime-points
             realtime chart sample limit, 0 auto
-  chart-y-axis
-            percent chart Y axis mode: absolute or relative
-  mode      sheet or line
+	  chart-y-axis
+	            percent chart Y axis mode: absolute or relative
+	  warn-cpu  CPU warning threshold percent, for example 90
+	  warn-ram  RAM warning threshold percent, for example 85
+	  warn-disk Disk warning threshold percent, for example 90
+	  warn-expiry-days
+	            expiry warning window in days
+	  mode      sheet or line
   ascii     true or false
   no-color  true or false
 
@@ -469,13 +588,16 @@ func printKeysHelp() {
 	fmt.Print(`ktui keys
 
 List layer:
-  Up/k, Down/j       select server
-  Mouse wheel        select previous/next server
-  Mouse click        open server detail
-  Footer click       settings/mode/refresh/ascii/quit
-  PgUp, PgDn         jump faster
-  Enter/o            open selected server detail
-  s                  open settings
+	  Up/k, Down/j       select server
+	  Mouse wheel        select previous/next server
+	  Mouse click        open server detail
+	  Footer click       search/sort/filter/settings/mode/refresh/ascii/quit
+	  PgUp, PgDn         jump faster
+	  /                  edit node search
+	  c                  cycle sort: default/status/cpu/ram/traffic/expiry
+	  v                  cycle filter: all/offline/expiring/high-load
+	  Enter/o            open selected server detail
+	  s                  open settings
   m                  switch line/sheet mode
   r                  refresh now
   d                  open or reload selected server detail data
@@ -486,6 +608,8 @@ List layer:
 Detail layer:
   Esc, b, q          return to list layer
   Mouse click Back   return to list layer
+  f, Enter           focus first chart on chart tabs
+  Mouse click chart  focus clicked chart
   h/l, 1-5, Tab      switch detail tabs
   [, ]               switch time window
   Up/k, Down/j       scroll one card
@@ -496,14 +620,25 @@ Detail layer:
   u                  show update command when an update is available
   PgUp, PgDn         scroll faster
 
+Chart focus:
+  Esc, b, q, Enter   return to detail layer
+  h/l, PgUp/PgDn     switch focused chart
+  [, ]               switch time window
+
 Settings layer:
-  Esc, q, s          return to previous layer
-  Up/k, Down/j       select setting
-  Mouse wheel/click  select setting
-  Footer click       back/adjust/toggle
-  Left/h, Right/l    adjust value
-  Enter              toggle or advance value
-`)
+	  Esc, q, s          return to previous layer
+	  Up/k, Down/j       select setting
+	  Mouse wheel/click  select setting
+	  Footer click       back/adjust/toggle
+	  Left/h, Right/l    adjust value
+	  Enter              toggle or advance value
+
+Search:
+	  Type text          match node name, region, tags, group, IP, OS, UUID
+	  Backspace          delete one character
+	  Enter              apply search
+	  Esc                cancel editing
+	`)
 }
 
 func envBool(key string) bool {

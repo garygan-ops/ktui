@@ -25,6 +25,8 @@ type App struct {
 	tab               int
 	window            int
 	detail            bool
+	chartFocus        bool
+	chartFocusIndex   int
 	settings          bool
 	cardStep          int
 	settingsWasDetail bool
@@ -33,6 +35,15 @@ type App struct {
 	settingsURL       string
 	settingsAPIKey    string
 	chartYAxisMode    chartYAxisMode
+	warnCPU           float64
+	warnRAM           float64
+	warnDisk          float64
+	warnExpiryDays    int
+	searchEditing     bool
+	searchQuery       string
+	searchDraft       string
+	nodeFilter        nodeFilterMode
+	nodeSort          nodeSortMode
 	notice            string
 
 	snapshot komari.Snapshot
@@ -69,6 +80,10 @@ type Options struct {
 	DetailCacheTTL  time.Duration
 	RealtimePoints  int
 	ChartYAxisMode  string
+	WarnCPU         float64
+	WarnRAM         float64
+	WarnDisk        float64
+	WarnExpiryDays  int
 	SaveSettings    func(PersistentSettings) error
 	CheckUpdate     func(context.Context) (UpdateCheckResult, error)
 	ASCII           bool
@@ -91,6 +106,10 @@ type PersistentSettings struct {
 	ChartYAxisMode string
 	ASCII          bool
 	NoColor        bool
+	WarnCPU        float64
+	WarnRAM        float64
+	WarnDisk       float64
+	WarnExpiryDays int
 }
 
 type Mode string
@@ -105,6 +124,26 @@ type chartYAxisMode string
 const (
 	chartYAxisAbsolute chartYAxisMode = "absolute"
 	chartYAxisRelative chartYAxisMode = "relative"
+)
+
+type nodeFilterMode string
+
+const (
+	nodeFilterAll      nodeFilterMode = "all"
+	nodeFilterOffline  nodeFilterMode = "offline"
+	nodeFilterExpiring nodeFilterMode = "expiring"
+	nodeFilterHighLoad nodeFilterMode = "high-load"
+)
+
+type nodeSortMode string
+
+const (
+	nodeSortDefault nodeSortMode = "default"
+	nodeSortStatus  nodeSortMode = "status"
+	nodeSortCPU     nodeSortMode = "cpu"
+	nodeSortRAM     nodeSortMode = "ram"
+	nodeSortTraffic nodeSortMode = "traffic"
+	nodeSortExpiry  nodeSortMode = "expiry"
 )
 
 type nodeDetail struct {
@@ -150,6 +189,7 @@ type detailKey struct {
 
 type keyEvent struct {
 	name string
+	text string
 	x    int
 	y    int
 }
@@ -230,6 +270,18 @@ func NewWithOptions(client *komari.Client, opts Options) *App {
 	if opts.Mode == "" {
 		opts.Mode = ModeSheet
 	}
+	if opts.WarnCPU <= 0 {
+		opts.WarnCPU = 90
+	}
+	if opts.WarnRAM <= 0 {
+		opts.WarnRAM = 85
+	}
+	if opts.WarnDisk <= 0 {
+		opts.WarnDisk = 90
+	}
+	if opts.WarnExpiryDays <= 0 {
+		opts.WarnExpiryDays = 7
+	}
 	return &App{
 		client:          client,
 		refreshInterval: opts.RefreshInterval,
@@ -242,6 +294,12 @@ func NewWithOptions(client *komari.Client, opts Options) *App {
 		settingsAPIKey:  opts.APIKey,
 		style:           Style{ASCII: opts.ASCII, NoColor: opts.NoColor},
 		mode:            opts.Mode,
+		warnCPU:         opts.WarnCPU,
+		warnRAM:         opts.WarnRAM,
+		warnDisk:        opts.WarnDisk,
+		warnExpiryDays:  opts.WarnExpiryDays,
+		nodeFilter:      nodeFilterAll,
+		nodeSort:        nodeSortDefault,
 		renderCh:        make(chan struct{}, 1),
 		refreshCh:       make(chan struct{}, 2),
 		resultCh:        make(chan fetchResult, 2),
@@ -296,6 +354,7 @@ func (a *App) Run(ctx context.Context) error {
 			a.fetch(ctx)
 		case result := <-a.resultCh:
 			pending := a.refreshPending
+			selectedUUID := a.selectedNodeUUID()
 			a.refreshPending = false
 			a.loading = false
 			a.fetching = false
@@ -306,7 +365,7 @@ func (a *App) Run(ctx context.Context) error {
 					a.lastFullFetch = result.snapshot.FetchedAt
 				}
 				a.recordRealtimeSnapshot(result.snapshot, result.snapshot.FetchedAt)
-				a.clampSelection()
+				a.restoreSelection(selectedUUID)
 				if a.detail {
 					a.ensureSelectedDetail(ctx)
 				}
@@ -464,10 +523,11 @@ func (a *App) fetchDetail(ctx context.Context, uuid string, force bool) {
 }
 
 func (a *App) ensureSelectedDetail(ctx context.Context) {
-	if len(a.snapshot.Nodes) == 0 {
+	node, ok := a.selectedNode()
+	if !ok {
 		return
 	}
-	a.fetchDetail(ctx, a.snapshot.Nodes[a.selected].UUID, false)
+	a.fetchDetail(ctx, node.UUID, false)
 }
 
 func (a *App) requestRefresh() {

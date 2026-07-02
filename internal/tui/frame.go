@@ -90,8 +90,13 @@ func (a *App) headerLines(width int) []string {
 	contextParts := []string{
 		a.headerChip("view", "list"),
 		a.headerChip("mode", string(a.mode)+"/"+mode),
+		a.headerChip("filter", a.filterText()),
+		a.headerChip("sort", a.sortText()),
 		a.headerChip("komari", valueOr(a.snapshot.Version.Version, "-")),
 		a.headerChip("rpc", valueOr(a.snapshot.RPCVersion, "-")),
+	}
+	if query := a.currentSearchQuery(); query != "" || a.searchEditing {
+		contextParts = append([]string{a.headerChip("search", valueOr(query, "-"))}, contextParts...)
 	}
 	if a.settings {
 		contextParts = []string{
@@ -102,11 +107,15 @@ func (a *App) headerLines(width int) []string {
 		}
 	} else if a.detail {
 		nodeName := "-"
-		if len(a.snapshot.Nodes) > 0 {
-			nodeName = a.nodeLabel(a.snapshot.Nodes[a.selected])
+		if node, ok := a.selectedNode(); ok {
+			nodeName = a.nodeLabel(node)
+		}
+		view := "detail"
+		if a.chartFocus {
+			view = "chart"
 		}
 		contextParts = []string{
-			a.headerChip("view", "detail"),
+			a.headerChip("view", view),
 			a.headerChip("node", nodeName),
 			a.headerChip("komari", valueOr(a.snapshot.Version.Version, "-")),
 			a.headerChip("rpc", valueOr(a.snapshot.RPCVersion, "-")),
@@ -137,6 +146,50 @@ func (a *App) headerChip(label string, value string) string {
 		value = "-"
 	}
 	return a.style.dim(strings.ToUpper(label)) + " " + value
+}
+
+func (a *App) listSearchVisible() bool {
+	return a.searchEditing || strings.TrimSpace(a.searchQuery) != ""
+}
+
+func (a *App) listSearchRows() int {
+	if a.listSearchVisible() {
+		return 1
+	}
+	return 0
+}
+
+func (a *App) listSearchLine(width int) string {
+	value := a.searchQuery
+	state := "active"
+	suffix := "  / edit"
+	if a.searchEditing {
+		value = a.searchDraft
+		state = "typing"
+		suffix = "  Enter apply  Esc cancel  Backspace delete"
+	}
+
+	prefix := a.style.bold(" Search ") + a.style.dim(state) + " "
+	fieldWidth := width - displayWidth(prefix) - displayWidth(suffix)
+	if fieldWidth < 8 {
+		suffix = ""
+		fieldWidth = width - displayWidth(prefix)
+	}
+	if fieldWidth < 4 {
+		return fitLine(" Search "+value, width)
+	}
+
+	content := value
+	if a.searchEditing {
+		content += "|"
+	}
+	field := "[" + fitLine(content, fieldWidth-2) + "]"
+	if a.searchEditing {
+		field = a.style.cyan(field)
+	} else {
+		field = a.style.yellow(field)
+	}
+	return fitLine(prefix+field+a.style.dim(suffix), width)
 }
 
 func headerAlign(left string, right string, width int) string {
@@ -173,12 +226,29 @@ func (a *App) footerTextForWidth(width int) string {
 }
 
 func (a *App) footerItems() []footerItem {
+	if a.searchEditing {
+		return []footerItem{
+			{Action: footerNone, Labels: [footerLabelVariants]string{"type search", "Typing", "Type"}},
+			{Action: footerNone, Labels: [footerLabelVariants]string{"Enter apply", "Apply", "OK"}},
+			{Action: footerBack, Labels: [footerLabelVariants]string{"Esc cancel", "Cancel", "Esc"}},
+			{Action: footerNone, Labels: [footerLabelVariants]string{"Backspace delete", "Delete", "Del"}},
+		}
+	}
 	if a.settings {
 		return []footerItem{
 			{Action: footerBack, Labels: [footerLabelVariants]string{"Esc/q back", "Back", "B"}},
 			{Action: footerSelect, Labels: [footerLabelVariants]string{"↑↓/jk select", "Select", "Sel"}},
 			{Action: footerAdjust, Labels: [footerLabelVariants]string{"←→/h/l adjust", "Adjust", "Adj"}},
 			{Action: footerToggle, Labels: [footerLabelVariants]string{"Enter toggle", "Toggle", "Tog"}},
+		}
+	}
+	if a.chartFocus {
+		return []footerItem{
+			{Action: footerBack, Labels: [footerLabelVariants]string{"Esc/q back", "Back", "B"}},
+			{Action: footerPrevChart, Labels: [footerLabelVariants]string{"h previous", "Previous", "Prev"}},
+			{Action: footerNextChart, Labels: [footerLabelVariants]string{"l next", "Next", "Next"}},
+			{Action: footerWindow, Labels: [footerLabelVariants]string{"[ ] window", "Window", "Win"}},
+			{Action: footerRefresh, Labels: [footerLabelVariants]string{"r refresh", "Refresh", "Ref"}},
 		}
 	}
 	if a.detail {
@@ -198,6 +268,9 @@ func (a *App) footerItems() []footerItem {
 	items := []footerItem{
 		{Action: footerSelect, Labels: [footerLabelVariants]string{"↑↓/jk select", "Select", "J"}},
 		{Action: footerOpen, Labels: [footerLabelVariants]string{"Enter detail", "Detail", "O"}},
+		{Action: footerSearch, Labels: [footerLabelVariants]string{"/ search", "Search", "/"}},
+		{Action: footerSort, Labels: [footerLabelVariants]string{"c sort", "Sort", "C"}},
+		{Action: footerFilter, Labels: [footerLabelVariants]string{"v filter", "Filter", "V"}},
 		{Action: footerSettings, Labels: [footerLabelVariants]string{"s settings", "Settings", "S"}},
 		{Action: footerMode, Labels: [footerLabelVariants]string{"m mode", "Mode", "M"}},
 		{Action: footerRefresh, Labels: [footerLabelVariants]string{"r refresh", "Refresh", "R"}},
@@ -213,21 +286,26 @@ func (a *App) footerItems() []footerItem {
 type footerAction string
 
 const (
-	footerNone     footerAction = ""
-	footerSelect   footerAction = "select"
-	footerOpen     footerAction = "open"
-	footerSettings footerAction = "settings"
-	footerMode     footerAction = "mode"
-	footerRefresh  footerAction = "refresh"
-	footerASCII    footerAction = "ascii"
-	footerQuit     footerAction = "quit"
-	footerBack     footerAction = "back"
-	footerAdjust   footerAction = "adjust"
-	footerToggle   footerAction = "toggle"
-	footerTabs     footerAction = "tabs"
-	footerWindow   footerAction = "window"
-	footerScroll   footerAction = "scroll"
-	footerUpdate   footerAction = "update"
+	footerNone      footerAction = ""
+	footerSelect    footerAction = "select"
+	footerOpen      footerAction = "open"
+	footerSettings  footerAction = "settings"
+	footerMode      footerAction = "mode"
+	footerRefresh   footerAction = "refresh"
+	footerASCII     footerAction = "ascii"
+	footerQuit      footerAction = "quit"
+	footerSearch    footerAction = "search"
+	footerSort      footerAction = "sort"
+	footerFilter    footerAction = "filter"
+	footerBack      footerAction = "back"
+	footerPrevChart footerAction = "prev-chart"
+	footerNextChart footerAction = "next-chart"
+	footerAdjust    footerAction = "adjust"
+	footerToggle    footerAction = "toggle"
+	footerTabs      footerAction = "tabs"
+	footerWindow    footerAction = "window"
+	footerScroll    footerAction = "scroll"
+	footerUpdate    footerAction = "update"
 )
 
 const footerLabelVariants = 3
@@ -308,7 +386,7 @@ func (a *App) adjustScroll(visibleRows int) {
 	if a.scroll < 0 {
 		a.scroll = 0
 	}
-	maxScroll := len(a.snapshot.Nodes) - visibleRows
+	maxScroll := len(a.viewNodes()) - visibleRows
 	if maxScroll < 0 {
 		maxScroll = 0
 	}

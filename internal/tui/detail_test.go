@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -80,6 +81,54 @@ func TestHistorySectionsIncludeAllMetricCharts(t *testing.T) {
 		if !hasSection(sections, title) {
 			t.Fatalf("missing %s section: %#v", title, sectionTitles(sections))
 		}
+	}
+}
+
+func TestChartFocusOpensAndClosesWithKeys(t *testing.T) {
+	app := NewWithOptions(nil, Options{ASCII: true})
+	node := komari.Node{UUID: "node-1", Name: "node", MemTotal: 1000, DiskTotal: 2000}
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	app.snapshot = komari.Snapshot{
+		Nodes:  []komari.Node{node},
+		Status: map[string]komari.Status{node.UUID: {CPU: 20, Time: komari.NullTime{Time: now, Valid: true}}},
+	}
+	app.detail = true
+	app.tab = 2
+
+	app.handleKey(context.Background(), keyEvent{name: "chart-focus"})
+	if !app.chartFocus {
+		t.Fatal("chart focus was not opened")
+	}
+	lines := app.renderDetailBody(90, 18)
+	if joined := strings.Join(lines, "\n"); !strings.Contains(joined, "CPU Chart") {
+		t.Fatalf("focused chart body missing title: %#v", lines)
+	}
+
+	app.handleKey(context.Background(), keyEvent{name: "tab-right"})
+	if !app.chartFocus || app.chartFocusIndex != 1 {
+		t.Fatalf("chart focus index = %d focus=%t, want next focused chart", app.chartFocusIndex, app.chartFocus)
+	}
+	app.handleKey(context.Background(), keyEvent{name: "back"})
+	if app.chartFocus || !app.detail {
+		t.Fatalf("focus=%t detail=%t, want focus closed and detail retained", app.chartFocus, app.detail)
+	}
+}
+
+func TestChartFocusWindowKeysKeepFocus(t *testing.T) {
+	app := NewWithOptions(nil, Options{ASCII: true})
+	node := komari.Node{UUID: "node-1", Name: "node", MemTotal: 1000, DiskTotal: 2000}
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	app.snapshot = komari.Snapshot{
+		Nodes:  []komari.Node{node},
+		Status: map[string]komari.Status{node.UUID: {CPU: 20, Time: komari.NullTime{Time: now, Valid: true}}},
+	}
+	app.detail = true
+	app.tab = 2
+	app.focusChart(0)
+
+	app.handleKey(context.Background(), keyEvent{name: "window-right"})
+	if !app.chartFocus || app.window != 1 {
+		t.Fatalf("focus=%t window=%d, want focused window 1", app.chartFocus, app.window)
 	}
 }
 
@@ -200,6 +249,45 @@ func TestAxisChartLinesIncludeYAxisAndTimeAxis(t *testing.T) {
 	}
 	if !strings.Contains(joined, "06-30 10:00") || !strings.Contains(joined, "06-30 11:00") {
 		t.Fatalf("missing time axis labels: %#v", lines)
+	}
+}
+
+func TestAxisChartLinesDetailedShowsIntermediateTimeTicks(t *testing.T) {
+	app := NewWithOptions(nil, Options{ASCII: true})
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	lines := app.axisChartLinesDetailed(axisChart{
+		Values: []float64{10, 20, 5, 30},
+		Times: []time.Time{
+			now.Add(-4 * time.Hour),
+			now.Add(-2 * time.Hour),
+			now.Add(-time.Hour),
+			now,
+		},
+		From:   "07-02 08:00",
+		To:     "07-02 12:00",
+		Unit:   "%",
+		Window: 4 * time.Hour,
+		Until:  now,
+	}, 80, 5)
+
+	ticks := lines[len(lines)-2]
+	axis := lines[len(lines)-1]
+	if strings.Contains(axis, "->") || strings.Contains(axis, "07-02") {
+		t.Fatalf("detailed axis should not use range arrow: %#v", lines)
+	}
+	if strings.Count(ticks, "|") < 5 {
+		t.Fatalf("missing detailed tick marks: %#v", lines)
+	}
+	startLabel := now.Add(-4 * time.Hour).Local().Format("15:04")
+	endLabel := now.Local().Format("15:04")
+	for _, label := range []string{startLabel, endLabel} {
+		if !strings.Contains(axis, label) {
+			t.Fatalf("missing axis label %q: %#v", label, lines)
+		}
+	}
+	midLabel := now.Add(-2 * time.Hour).Local().Format("15:04")
+	if !strings.Contains(axis, midLabel) {
+		t.Fatalf("missing intermediate time tick: %#v", lines)
 	}
 }
 

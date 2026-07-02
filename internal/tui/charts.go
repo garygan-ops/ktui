@@ -70,6 +70,14 @@ func (a *App) percentChart(section detailSection) detailSection {
 }
 
 func (a *App) axisChartLines(chart axisChart, width int, height int) []string {
+	return a.axisChartLinesWithOptions(chart, width, height, false)
+}
+
+func (a *App) axisChartLinesDetailed(chart axisChart, width int, height int) []string {
+	return a.axisChartLinesWithOptions(chart, width, height, true)
+}
+
+func (a *App) axisChartLinesWithOptions(chart axisChart, width int, height int, detailedXAxis bool) []string {
 	if height <= 0 {
 		return nil
 	}
@@ -85,7 +93,11 @@ func (a *App) axisChartLines(chart axisChart, width int, height int) []string {
 				break
 			}
 		}
-		lines = append(lines, fmt.Sprintf(" %s -> %s", chart.From, chart.To))
+		if detailedXAxis {
+			lines = append(lines, fitLine(" "+chartDetailedXAxisLabel(chart), width))
+		} else {
+			lines = append(lines, fmt.Sprintf(" %s -> %s", chart.From, chart.To))
+		}
 		return limitRawLines(lines, height)
 	}
 
@@ -100,7 +112,11 @@ func (a *App) axisChartLines(chart axisChart, width int, height int) []string {
 	for _, item := range series {
 		seriesPoints = append(seriesPoints, chartPointsForValues(chart, item.Values, plotWidth))
 	}
-	plotRows := max(1, height-1)
+	axisRows := 1
+	if detailedXAxis {
+		axisRows = 2
+	}
+	plotRows := max(1, height-axisRows)
 	rows := chartYAxisRows(minVal, maxVal, plotRows, chart.Unit, labelWidth)
 
 	out := make([]string, 0, height)
@@ -143,8 +159,7 @@ func (a *App) axisChartLines(chart axisChart, width int, height int) []string {
 		out = append(out, fitLine(b.String(), width))
 	}
 
-	axis := chartXAxisLine(chart.From, chart.To, width, labelWidth, a.style.ASCII)
-	out = append(out, axis)
+	out = append(out, chartXAxisLines(chart, width, labelWidth, a.style.ASCII, detailedXAxis)...)
 	return limitRawLines(out, height)
 }
 

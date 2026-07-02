@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"ktui/internal/komari"
 )
@@ -11,7 +12,8 @@ func (a *App) renderDetailBody(width int, bodyHeight int) []string {
 	if bodyHeight <= 0 {
 		return nil
 	}
-	if len(a.snapshot.Nodes) == 0 {
+	node, ok := a.selectedNode()
+	if !ok {
 		if a.loading {
 			return fillBody([]string{"Loading nodes..."}, width, bodyHeight)
 		}
@@ -19,8 +21,10 @@ func (a *App) renderDetailBody(width int, bodyHeight int) []string {
 	}
 
 	a.clampSelection()
-	node := a.snapshot.Nodes[a.selected]
 	st := a.snapshot.Status[node.UUID]
+	if a.chartFocus {
+		return a.renderFocusedChartBody(node, st, width, bodyHeight)
+	}
 	chrome := a.detailChromeLines(node, st, width)
 	contentHeight := bodyHeight - len(chrome)
 	if contentHeight < 1 {
@@ -56,8 +60,30 @@ func (a *App) renderDetailBody(width int, bodyHeight int) []string {
 	return fillBody(lines, width, bodyHeight)
 }
 
+func (a *App) renderFocusedChartBody(node komari.Node, st komari.Status, width int, bodyHeight int) []string {
+	sections := a.chartSections(node, st)
+	if len(sections) == 0 {
+		a.chartFocus = false
+		return a.renderDetailBody(width, bodyHeight)
+	}
+	a.clampChartFocus(len(sections))
+	section := sections[a.chartFocusIndex]
+	title := fmt.Sprintf(" %s  %s  %s", section.Title, a.nodeLabel(node), detailWindows[a.window].Label)
+	lines := []string{
+		a.style.bold(fitLine(title, width)),
+		a.style.dim(fitLine(" Esc/b/q back   h/l previous/next chart   [ ] window   r refresh", width)),
+	}
+	chartHeight := bodyHeight - len(lines)
+	if chartHeight < 1 {
+		chartHeight = 1
+	}
+	lines = append(lines, a.axisChartLinesDetailed(*section.Chart, width, chartHeight)...)
+	return fillBody(lines, width, bodyHeight)
+}
+
 func (a *App) detailChromeLines(node komari.Node, st komari.Status, width int) []string {
 	lines := make([]string, 0, 6)
+	alert := a.alertForNode(node, st, time.Now())
 	title := fmt.Sprintf(" %s  %s  %s  region %s  seen %s",
 		a.text(node.Name),
 		a.statusPill(st.Online),
@@ -66,6 +92,9 @@ func (a *App) detailChromeLines(node komari.Node, st komari.Status, width int) [
 		shortTimeFromNull(st.Time),
 	)
 	lines = append(lines, a.style.bold(fitLine(title, width)))
+	if len(alert.Reasons) > 0 {
+		lines = append(lines, a.styleAlertLine(fitLine(" WARN "+alertText(alert), width), alert))
+	}
 	lines = append(lines, a.detailMetricStrip(node, st, width))
 	lines = append(lines, a.detailTabLine(width))
 	lines = append(lines, a.detailWindowLine(width))
@@ -82,9 +111,9 @@ func (a *App) detailMetricStrip(node komari.Node, st komari.Status, width int) s
 		barWidth = 8
 	}
 	parts := []string{
-		fmt.Sprintf(" CPU %5.1f%% %s", st.CPU, a.usageBar(st.CPU, barWidth)),
-		fmt.Sprintf(" RAM %5.1f%% %s", ramPct, a.usageBar(ramPct, barWidth)),
-		fmt.Sprintf(" DSK %5.1f%% %s", diskPct, a.usageBar(diskPct, barWidth)),
+		fmt.Sprintf(" CPU %5.1f%% %s", st.CPU, a.usageBarFor("CPU", st.CPU, barWidth)),
+		fmt.Sprintf(" RAM %5.1f%% %s", ramPct, a.usageBarFor("RAM", ramPct, barWidth)),
+		fmt.Sprintf(" DSK %5.1f%% %s", diskPct, a.usageBarFor("DSK", diskPct, barWidth)),
 	}
 	if width >= 104 {
 		parts = append(parts, fmt.Sprintf(" NET %s %s %s %s", a.style.up(), speedIEC(st.NetOut), a.style.down(), speedIEC(st.NetIn)))
@@ -134,31 +163,14 @@ func (a *App) detailContentLines(node komari.Node, st komari.Status, width int, 
 	if len(sections) == 0 {
 		return []string{fitLine("", width)}
 	}
-	if width >= 96 {
-		return a.detailSectionGrid(sections, width, 2, cardHeight)
-	}
-	return a.detailSectionGrid(sections, width, 1, cardHeight)
+	return a.detailSectionGrid(sections, width, detailGridColumns(width), cardHeight)
 }
 
 func (a *App) detailSectionGrid(sections []detailSection, width int, columns int, cardHeight int) []string {
-	gap := 2
 	if cardHeight < detailCardHeight {
 		cardHeight = detailCardHeight
 	}
-	if columns < 1 {
-		columns = 1
-	}
-	for columns > 1 {
-		cardWidth := (width - gap*(columns-1)) / columns
-		if cardWidth >= 42 {
-			break
-		}
-		columns--
-	}
-	cardWidth := width
-	if columns > 1 {
-		cardWidth = (width - gap*(columns-1)) / columns
-	}
+	columns, cardWidth := detailGridLayout(width, columns)
 
 	lines := make([]string, 0, len(sections)*(cardHeight+1))
 	for row := 0; row < len(sections); row += columns {
@@ -175,7 +187,7 @@ func (a *App) detailSectionGrid(sections []detailSection, width int, columns int
 			var line strings.Builder
 			for col, card := range rowCards {
 				if col > 0 {
-					line.WriteString(strings.Repeat(" ", gap))
+					line.WriteString(strings.Repeat(" ", detailGridGap))
 				}
 				line.WriteString(card[lineIndex])
 			}
@@ -183,6 +195,33 @@ func (a *App) detailSectionGrid(sections []detailSection, width int, columns int
 		}
 	}
 	return lines
+}
+
+const detailGridGap = 2
+
+func detailGridColumns(width int) int {
+	if width >= 96 {
+		return 2
+	}
+	return 1
+}
+
+func detailGridLayout(width int, columns int) (int, int) {
+	if columns < 1 {
+		columns = 1
+	}
+	for columns > 1 {
+		cardWidth := (width - detailGridGap*(columns-1)) / columns
+		if cardWidth >= 42 {
+			break
+		}
+		columns--
+	}
+	cardWidth := width
+	if columns > 1 {
+		cardWidth = (width - detailGridGap*(columns-1)) / columns
+	}
+	return columns, cardWidth
 }
 
 func detailCardHeightFor(contentHeight int) int {
@@ -234,6 +273,71 @@ func (a *App) detailSections(node komari.Node, st komari.Status) []detailSection
 		return a.metaSections(node, st)
 	default:
 		return a.overviewSections(node, st)
+	}
+}
+
+func (a *App) chartSections(node komari.Node, st komari.Status) []detailSection {
+	sections := a.detailSections(node, st)
+	charts := make([]detailSection, 0, len(sections))
+	for _, section := range sections {
+		if section.Chart != nil {
+			charts = append(charts, section)
+		}
+	}
+	return charts
+}
+
+func (a *App) focusChart(index int) bool {
+	node, ok := a.selectedNode()
+	if !a.detail || !ok {
+		return false
+	}
+	st := a.snapshot.Status[node.UUID]
+	charts := a.chartSections(node, st)
+	if len(charts) == 0 {
+		return false
+	}
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(charts) {
+		index = len(charts) - 1
+	}
+	a.chartFocus = true
+	a.chartFocusIndex = index
+	a.scroll = 0
+	return true
+}
+
+func (a *App) closeChartFocus() {
+	a.chartFocus = false
+	a.chartFocusIndex = 0
+}
+
+func (a *App) moveChartFocus(delta int) {
+	node, ok := a.selectedNode()
+	if !a.chartFocus || !ok {
+		return
+	}
+	st := a.snapshot.Status[node.UUID]
+	charts := a.chartSections(node, st)
+	if len(charts) == 0 {
+		a.closeChartFocus()
+		return
+	}
+	a.chartFocusIndex = (a.chartFocusIndex + delta + len(charts)) % len(charts)
+}
+
+func (a *App) clampChartFocus(count int) {
+	if count <= 0 {
+		a.closeChartFocus()
+		return
+	}
+	if a.chartFocusIndex < 0 {
+		a.chartFocusIndex = 0
+	}
+	if a.chartFocusIndex >= count {
+		a.chartFocusIndex = count - 1
 	}
 }
 
@@ -535,7 +639,8 @@ func (a *App) metaSections(node komari.Node, st komari.Status) []detailSection {
 }
 
 func (a *App) detailUsageLine(label string, pct float64, value string) string {
-	return fmt.Sprintf(" %-5s %5.1f%% %s  %s", strings.TrimSpace(label), pct, a.usageBar(pct, 10), value)
+	cleanLabel := strings.TrimSpace(label)
+	return fmt.Sprintf(" %-5s %5.1f%% %s  %s", cleanLabel, pct, a.usageBarFor(cleanLabel, pct, 10), value)
 }
 
 func (a *App) sparkSection(title string, values []float64) detailSection {

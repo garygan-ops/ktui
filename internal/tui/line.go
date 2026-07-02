@@ -12,9 +12,13 @@ func (a *App) renderLineBody(width int, bodyHeight int) []string {
 	if bodyHeight <= 0 {
 		return nil
 	}
-	if len(a.snapshot.Nodes) == 0 {
+	nodes := a.viewNodes()
+	if len(nodes) == 0 {
 		if a.loading {
 			return fillBody([]string{"Loading nodes..."}, width, bodyHeight)
+		}
+		if len(a.snapshot.Nodes) > 0 {
+			return fillBody([]string{"No nodes match the current search/filter."}, width, bodyHeight)
 		}
 		return fillBody([]string{"No nodes returned by Komari."}, width, bodyHeight)
 	}
@@ -26,9 +30,9 @@ func (a *App) renderLineBody(width int, bodyHeight int) []string {
 
 	lines := make([]string, 0, bodyHeight)
 	lines = append(lines, header...)
-	end := min(len(a.snapshot.Nodes), a.scroll+visibleRows)
+	end := min(len(nodes), a.scroll+visibleRows)
 	for i := a.scroll; i < end; i++ {
-		lines = append(lines, a.lineTableRow(i, a.snapshot.Nodes[i], width))
+		lines = append(lines, a.lineTableRow(i, nodes[i], width))
 	}
 	return fillBody(lines, width, bodyHeight)
 }
@@ -36,7 +40,7 @@ func (a *App) renderLineBody(width int, bodyHeight int) []string {
 func (a *App) lineTableHeader(width int) []string {
 	title := a.lineTableColumns(width, false, komari.Node{}, komari.Status{}, false)
 	return []string{
-		a.style.bold(fitLine("Servers "+a.style.dim(fmt.Sprintf("(%d nodes)", len(a.snapshot.Nodes))), width)),
+		a.style.bold(fitLine(a.listTitle(), width)),
 		a.style.dim(fitLine(title, width)),
 		a.style.dim(fitLine(a.style.separator(width), width)),
 	}
@@ -48,6 +52,10 @@ func (a *App) lineTableRow(index int, node komari.Node, width int) string {
 	line := a.lineTableColumns(width, true, node, st, selected)
 	if index == a.selected {
 		return a.style.inverse(fitLine(line, width))
+	}
+	alert := a.alertForNode(node, st, time.Now())
+	if alert.Critical || alert.Warning {
+		return a.styleAlertLine(fitLine(line, width), alert)
 	}
 	if !st.Online {
 		return a.style.dim(fitLine(line, width))
@@ -122,18 +130,25 @@ func (a *App) lineTableColumns(width int, row bool, node komari.Node, st komari.
 	if selected {
 		marker = ">"
 	}
+	alert := a.alertForNode(node, st, time.Now())
 	state := "on"
 	if !st.Online {
 		state = "off"
+	} else if len(alert.Reasons) > 0 {
+		state = "!"
 	}
 	if !a.style.ASCII {
-		if st.Online {
+		if len(alert.Reasons) > 0 && st.Online {
+			state = "!"
+		} else if st.Online {
 			state = "●"
 		} else {
 			state = "●"
 		}
 		if !selected {
-			if st.Online {
+			if alert.Critical || alert.Warning {
+				state = a.styleAlertLine(state, alert)
+			} else if st.Online {
 				state = a.style.green(state)
 			} else {
 				state = a.style.red(state)

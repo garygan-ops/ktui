@@ -26,11 +26,11 @@ func (a *App) panelLines(width int, maxLines int) []string {
 }
 
 func (a *App) overviewLines(width int, maxLines int) []string {
-	if len(a.snapshot.Nodes) == 0 {
+	node, ok := a.selectedNode()
+	if !ok {
 		lines := []string{a.style.bold("Overview")}
 		return limitLines(append(lines, "No data yet."), width, maxLines)
 	}
-	node := a.snapshot.Nodes[a.selected]
 	st := a.snapshot.Status[node.UUID]
 	ramTotal := firstNonZero(st.RAMTotal, node.MemTotal)
 	diskTotal := firstNonZero(st.DiskTotal, node.DiskTotal)
@@ -60,10 +60,10 @@ func (a *App) overviewLines(width int, maxLines int) []string {
 }
 
 func (a *App) detailLines(width int, maxLines int) []string {
-	if len(a.snapshot.Nodes) == 0 {
+	node, ok := a.selectedNode()
+	if !ok {
 		return []string{}
 	}
-	node := a.snapshot.Nodes[a.selected]
 	st := a.snapshot.Status[node.UUID]
 	lines := []string{a.style.bold("Node")}
 
@@ -123,10 +123,10 @@ func (a *App) detailLines(width int, maxLines int) []string {
 }
 
 func (a *App) historyLines(width int, maxLines int) []string {
-	if len(a.snapshot.Nodes) == 0 {
+	node, ok := a.selectedNode()
+	if !ok {
 		return nil
 	}
-	node := a.snapshot.Nodes[a.selected]
 	window := detailWindows[a.window]
 	detail := a.currentDetail(node.UUID)
 	lines := []string{a.style.bold(fmt.Sprintf("History: %s  window %s", a.text(node.Name), window.Label))}
@@ -179,10 +179,10 @@ func (a *App) historyLines(width int, maxLines int) []string {
 }
 
 func (a *App) pingLines(width int, maxLines int) []string {
-	if len(a.snapshot.Nodes) == 0 {
+	node, ok := a.selectedNode()
+	if !ok {
 		return nil
 	}
-	node := a.snapshot.Nodes[a.selected]
 	st := a.snapshot.Status[node.UUID]
 	window := detailWindows[a.window]
 	detail := a.currentDetail(node.UUID)
@@ -242,10 +242,10 @@ func (a *App) pingLines(width int, maxLines int) []string {
 }
 
 func (a *App) metaLines(width int, maxLines int) []string {
-	if len(a.snapshot.Nodes) == 0 {
+	node, ok := a.selectedNode()
+	if !ok {
 		return nil
 	}
-	node := a.snapshot.Nodes[a.selected]
 	st := a.snapshot.Status[node.UUID]
 	window := detailWindows[a.window]
 	detail := a.currentDetail(node.UUID)

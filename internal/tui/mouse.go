@@ -65,7 +65,13 @@ func (a *App) handleMouseClick(ctx context.Context, x int, y int) {
 		if a.clickDetailBack(x, y) {
 			return
 		}
+		if a.chartFocus {
+			return
+		}
 		if y <= mouseHeaderRows {
+			return
+		}
+		if a.clickDetailChart(x, y) {
 			return
 		}
 		a.clickDetailChrome(ctx, x, y)
@@ -74,7 +80,13 @@ func (a *App) handleMouseClick(ctx context.Context, x int, y int) {
 	if y <= mouseHeaderRows {
 		return
 	}
-	if len(a.snapshot.Nodes) == 0 {
+	if rows := a.listSearchRows(); rows > 0 {
+		if y <= mouseHeaderRows+rows {
+			a.openSearch()
+			return
+		}
+	}
+	if len(a.viewNodes()) == 0 {
 		return
 	}
 	if a.mode == ModeLine {
@@ -94,6 +106,14 @@ func (a *App) clickFooter(ctx context.Context, x int, y int) bool {
 		drawWidth--
 	}
 	action := a.footerActionAt(x, drawWidth)
+	if a.searchEditing {
+		if action == footerBack {
+			a.searchDraft = a.searchQuery
+			a.searchEditing = false
+			return true
+		}
+		return false
+	}
 	if a.settings {
 		switch action {
 		case footerBack:
@@ -108,14 +128,22 @@ func (a *App) clickFooter(ctx context.Context, x int, y int) bool {
 	if a.detail {
 		switch action {
 		case footerBack:
-			a.detail = false
-			a.scroll = 0
+			if a.chartFocus {
+				a.closeChartFocus()
+			} else {
+				a.detail = false
+				a.scroll = 0
+			}
+		case footerPrevChart:
+			a.moveChartFocus(-1)
+		case footerNextChart:
+			a.moveChartFocus(1)
 		case footerSettings:
 			a.openSettings()
 		case footerRefresh:
 			a.requestFullRefresh()
-			if len(a.snapshot.Nodes) > 0 {
-				a.fetchDetail(ctx, a.snapshot.Nodes[a.selected].UUID, true)
+			if node, ok := a.selectedNode(); ok {
+				a.fetchDetail(ctx, node.UUID, true)
 			}
 		case footerUpdate:
 			a.showUpdateHint()
@@ -127,6 +155,12 @@ func (a *App) clickFooter(ctx context.Context, x int, y int) bool {
 	switch action {
 	case footerOpen:
 		a.openSelectedDetail(ctx)
+	case footerSearch:
+		a.openSearch()
+	case footerSort:
+		a.cycleNodeSort()
+	case footerFilter:
+		a.cycleNodeFilter()
 	case footerSettings:
 		a.openSettings()
 	case footerMode:
@@ -165,13 +199,13 @@ func (a *App) clickSettings(y int) {
 }
 
 func (a *App) clickLine(ctx context.Context, y int) {
-	bodyRow := y - mouseHeaderRows - 1
+	bodyRow := y - mouseHeaderRows - 1 - a.listSearchRows()
 	row := bodyRow - lineHeaderRows
 	if row < 0 {
 		return
 	}
 	index := a.scroll + row
-	if index >= 0 && index < len(a.snapshot.Nodes) {
+	if index >= 0 && index < len(a.viewNodes()) {
 		a.selected = index
 		a.clampSelection()
 		a.openSelectedDetail(ctx)
@@ -185,11 +219,12 @@ func (a *App) clickSheet(ctx context.Context, x int, y int) {
 		drawWidth--
 	}
 	bodyHeight := height - mouseHeaderRows - 1
+	bodyHeight -= a.listSearchRows()
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
 	columns, cardWidth := sheetLayout(drawWidth)
-	bodyRow := y - mouseHeaderRows - 1
+	bodyRow := y - mouseHeaderRows - 1 - a.listSearchRows()
 	if bodyRow < 0 {
 		return
 	}
@@ -212,7 +247,7 @@ func (a *App) clickSheet(ctx context.Context, x int, y int) {
 		return
 	}
 	index := (a.scroll+row)*columns + col
-	if index >= 0 && index < len(a.snapshot.Nodes) {
+	if index >= 0 && index < len(a.viewNodes()) {
 		a.selected = index
 		a.clampSelection()
 		a.openSelectedDetail(ctx)
@@ -220,7 +255,7 @@ func (a *App) clickSheet(ctx context.Context, x int, y int) {
 }
 
 func (a *App) openSelectedDetail(ctx context.Context) {
-	if len(a.snapshot.Nodes) == 0 {
+	if len(a.viewNodes()) == 0 {
 		return
 	}
 	a.detail = true
@@ -242,6 +277,7 @@ func (a *App) openSettings() {
 	a.settingsWasDetail = a.detail
 	a.settings = true
 	a.detail = false
+	a.closeChartFocus()
 	a.scroll = 0
 }
 
@@ -293,6 +329,76 @@ func (a *App) clickDetailChrome(ctx context.Context, x int, y int) {
 			a.ensureSelectedDetail(ctx)
 		}
 	}
+}
+
+func (a *App) clickDetailChart(x int, y int) bool {
+	index, ok := a.chartIndexAt(x, y)
+	if !ok {
+		return false
+	}
+	return a.focusChart(index)
+}
+
+func (a *App) chartIndexAt(x int, y int) (int, bool) {
+	if len(a.viewNodes()) == 0 {
+		return 0, false
+	}
+	width, height := terminalSize()
+	drawWidth := width
+	if drawWidth > 1 {
+		drawWidth--
+	}
+	bodyHeight := height - mouseHeaderRows - 1
+	if bodyHeight < 1 {
+		bodyHeight = 1
+	}
+	chromeRows := 4
+	contentHeight := bodyHeight - chromeRows
+	if contentHeight < 1 {
+		return 0, false
+	}
+	cardHeight := detailCardHeightFor(contentHeight)
+	if contentHeight >= cardHeight {
+		contentHeight = contentHeight / cardHeight * cardHeight
+	}
+	bodyRow := y - mouseHeaderRows - 1
+	contentRow := bodyRow - chromeRows
+	if contentRow < 0 || contentRow >= contentHeight {
+		return 0, false
+	}
+	contentRow += a.scroll
+	columns, cardWidth := detailGridLayout(drawWidth, detailGridColumns(drawWidth))
+	row := contentRow / cardHeight
+	lineInCard := contentRow % cardHeight
+	if lineInCard >= cardHeight {
+		return 0, false
+	}
+	x0 := x - 1
+	columnSpan := cardWidth + detailGridGap
+	col := x0 / columnSpan
+	if col < 0 || col >= columns {
+		return 0, false
+	}
+	if x0%columnSpan >= cardWidth {
+		return 0, false
+	}
+	sectionIndex := row*columns + col
+	node, ok := a.selectedNode()
+	if !ok {
+		return 0, false
+	}
+	st := a.snapshot.Status[node.UUID]
+	sections := a.detailSections(node, st)
+	if sectionIndex < 0 || sectionIndex >= len(sections) || sections[sectionIndex].Chart == nil {
+		return 0, false
+	}
+	chartIndex := 0
+	for i := 0; i < sectionIndex; i++ {
+		if sections[i].Chart != nil {
+			chartIndex++
+		}
+	}
+	return chartIndex, true
 }
 
 func sheetLayout(width int) (int, int) {

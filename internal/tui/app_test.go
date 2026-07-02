@@ -100,9 +100,9 @@ func TestUpdateFooterClickShowsHint(t *testing.T) {
 	app.update.Available = true
 	app.update.Latest = "v0.2.0"
 	_, height := terminalSize()
-	x, _, ok := footerLabelBounds(app.footerText(), "u update")
+	x, ok := footerActionPosition(app, footerUpdate)
 	if !ok {
-		t.Fatal("missing u update footer label")
+		t.Fatal("missing update footer action")
 	}
 
 	app.handleKey(context.Background(), keyEvent{name: "mouse-left", x: x, y: height})

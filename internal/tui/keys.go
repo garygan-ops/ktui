@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
+	"unicode/utf8"
 )
 
 func (a *App) readKeys(ctx context.Context) {
@@ -50,45 +52,55 @@ func parseKeysWithRemainder(data []byte) ([]keyEvent, []byte) {
 		case 3:
 			out = append(out, keyEvent{name: "force-quit"})
 		case 'q', 'Q':
-			out = append(out, keyEvent{name: "quit"})
+			out = append(out, keyEvent{name: "quit", text: string(data[i])})
 		case 'r', 'R':
-			out = append(out, keyEvent{name: "refresh"})
+			out = append(out, keyEvent{name: "refresh", text: string(data[i])})
 		case '\r', '\n':
 			out = append(out, keyEvent{name: "open"})
 		case 'd', 'D':
-			out = append(out, keyEvent{name: "detail-refresh"})
+			out = append(out, keyEvent{name: "detail-refresh", text: string(data[i])})
+		case 'f', 'F':
+			out = append(out, keyEvent{name: "chart-focus", text: string(data[i])})
 		case 'a', 'A':
-			out = append(out, keyEvent{name: "ascii"})
+			out = append(out, keyEvent{name: "ascii", text: string(data[i])})
 		case 'o', 'O':
-			out = append(out, keyEvent{name: "open"})
-		case 'b', 'B', 0x7f:
-			out = append(out, keyEvent{name: "back"})
+			out = append(out, keyEvent{name: "open", text: string(data[i])})
+		case 'b', 'B':
+			out = append(out, keyEvent{name: "back", text: string(data[i])})
+		case 0x7f:
+			out = append(out, keyEvent{name: "backspace"})
 		case 'm', 'M':
-			out = append(out, keyEvent{name: "mode"})
+			out = append(out, keyEvent{name: "mode", text: string(data[i])})
 		case 's', 'S':
-			out = append(out, keyEvent{name: "settings"})
+			out = append(out, keyEvent{name: "settings", text: string(data[i])})
 		case 'u', 'U':
-			out = append(out, keyEvent{name: "update-hint"})
+			out = append(out, keyEvent{name: "update-hint", text: string(data[i])})
+		case '/':
+			out = append(out, keyEvent{name: "search", text: "/"})
+		case 'c', 'C':
+			out = append(out, keyEvent{name: "sort", text: string(data[i])})
+		case 'v', 'V':
+			out = append(out, keyEvent{name: "filter", text: string(data[i])})
 		case 'j':
-			out = append(out, keyEvent{name: "down"})
+			out = append(out, keyEvent{name: "down", text: string(data[i])})
 		case 'k':
-			out = append(out, keyEvent{name: "up"})
+			out = append(out, keyEvent{name: "up", text: string(data[i])})
 		case 'h':
-			out = append(out, keyEvent{name: "tab-left"})
+			out = append(out, keyEvent{name: "tab-left", text: string(data[i])})
 		case 'l':
-			out = append(out, keyEvent{name: "tab-right"})
+			out = append(out, keyEvent{name: "tab-right", text: string(data[i])})
 		case '1', '2', '3', '4', '5':
-			out = append(out, keyEvent{name: "tab-" + string(data[i])})
+			out = append(out, keyEvent{name: "tab-" + string(data[i]), text: string(data[i])})
 		case '\t':
 			out = append(out, keyEvent{name: "tab-right"})
 		case 'g':
-			out = append(out, keyEvent{name: "top"})
+			out = append(out, keyEvent{name: "top", text: string(data[i])})
 		case 'G':
-			out = append(out, keyEvent{name: "bottom"})
+			out = append(out, keyEvent{name: "bottom", text: string(data[i])})
 		case '[':
-			out = append(out, keyEvent{name: "window-left"})
+			out = append(out, keyEvent{name: "window-left", text: string(data[i])})
 		case ']':
-			out = append(out, keyEvent{name: "window-right"})
+			out = append(out, keyEvent{name: "window-right", text: string(data[i])})
 		case 0x1b:
 			if i+2 < len(data) && data[i+1] == '[' {
 				if data[i+2] == '<' {
@@ -132,6 +144,19 @@ func parseKeysWithRemainder(data []byte) ([]keyEvent, []byte) {
 				}
 			} else {
 				out = append(out, keyEvent{name: "back"})
+			}
+		default:
+			if data[i] >= utf8.RuneSelf {
+				if !utf8.FullRune(data[i:]) {
+					return out, append([]byte(nil), data[i:]...)
+				}
+				r, size := utf8.DecodeRune(data[i:])
+				if r != utf8.RuneError {
+					out = append(out, keyEvent{name: "char", text: string(r)})
+					i += size - 1
+				}
+			} else if data[i] >= 32 && data[i] != 0x7f {
+				out = append(out, keyEvent{name: "char", text: string(data[i])})
 			}
 		}
 	}
@@ -203,6 +228,10 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 		}
 		return
 	}
+	if a.searchEditing {
+		a.handleSearchKey(key)
+		return
+	}
 	if a.settings {
 		a.handleSettingsKey(key)
 		return
@@ -211,37 +240,65 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 	case "force-quit":
 		a.quit = true
 	case "quit":
-		if a.detail {
+		if a.chartFocus {
+			a.closeChartFocus()
+		} else if a.detail {
 			a.detail = false
 			a.scroll = 0
+		} else if a.clearListScope() {
+			// q backs out of a narrowed list before it quits the app.
 		} else {
 			a.quit = true
 		}
-	case "back":
-		if a.detail {
+	case "back", "backspace":
+		if a.chartFocus {
+			a.closeChartFocus()
+		} else if a.detail {
 			a.detail = false
 			a.scroll = 0
+		} else {
+			a.clearListScope()
 		}
 	case "settings":
 		a.openSettings()
 	case "update-hint":
 		a.showUpdateHint()
+	case "search":
+		if !a.detail {
+			a.openSearch()
+		}
+	case "sort":
+		if !a.detail {
+			a.cycleNodeSort()
+		}
+	case "filter":
+		if !a.detail {
+			a.cycleNodeFilter()
+		}
 	case "open":
-		if len(a.snapshot.Nodes) > 0 {
+		if a.chartFocus {
+			a.closeChartFocus()
+		} else if a.detail {
+			a.focusChart(a.chartFocusIndex)
+		} else if _, ok := a.selectedNode(); ok {
 			a.detail = true
 			a.scroll = 0
 			a.ensureSelectedDetail(ctx)
 		}
+	case "chart-focus":
+		a.focusChart(0)
 	case "refresh":
 		a.requestFullRefresh()
-		if a.detail && len(a.snapshot.Nodes) > 0 {
-			a.fetchDetail(ctx, a.snapshot.Nodes[a.selected].UUID, true)
+		if a.detail {
+			if node, ok := a.selectedNode(); ok {
+				a.fetchDetail(ctx, node.UUID, true)
+			}
 		}
 	case "detail-refresh":
-		if len(a.snapshot.Nodes) > 0 {
+		if node, ok := a.selectedNode(); ok {
 			a.detail = true
 			a.scroll = 0
-			a.fetchDetail(ctx, a.snapshot.Nodes[a.selected].UUID, true)
+			a.fetchDetail(ctx, node.UUID, true)
 		}
 	case "ascii":
 		a.style.ASCII = !a.style.ASCII
@@ -254,25 +311,33 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 			}
 		}
 	case "up":
-		if a.detail {
+		if a.chartFocus {
+			// no-op; focused charts use h/l for chart selection.
+		} else if a.detail {
 			a.scroll -= a.detailScrollStep()
 		} else {
 			a.selected--
 		}
 	case "down":
-		if a.detail {
+		if a.chartFocus {
+			// no-op; focused charts use h/l for chart selection.
+		} else if a.detail {
 			a.scroll += a.detailScrollStep()
 		} else {
 			a.selected++
 		}
 	case "pageup":
-		if a.detail {
+		if a.chartFocus {
+			a.moveChartFocus(-1)
+		} else if a.detail {
 			a.scroll -= a.detailScrollStep() * 3
 		} else {
 			a.selected -= 10
 		}
 	case "pagedown":
-		if a.detail {
+		if a.chartFocus {
+			a.moveChartFocus(1)
+		} else if a.detail {
 			a.scroll += a.detailScrollStep() * 3
 		} else {
 			a.selected += 10
@@ -287,32 +352,47 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 		if a.detail {
 			a.scroll = 1 << 30
 		} else {
-			a.selected = len(a.snapshot.Nodes) - 1
+			a.selected = len(a.viewNodes()) - 1
 		}
 	case "tab-left":
-		if a.detail {
+		if a.chartFocus {
+			a.moveChartFocus(-1)
+		} else if a.detail {
 			a.tab = (a.tab + len(tabNames) - 1) % len(tabNames)
 			a.scroll = 0
+			a.closeChartFocus()
 		}
 	case "tab-right":
-		if a.detail {
+		if a.chartFocus {
+			a.moveChartFocus(1)
+		} else if a.detail {
 			a.tab = (a.tab + 1) % len(tabNames)
 			a.scroll = 0
+			a.closeChartFocus()
 		}
 	case "tab-1", "tab-2", "tab-3", "tab-4", "tab-5":
 		if a.detail {
 			a.tab = int(key.name[len(key.name)-1] - '1')
 			a.scroll = 0
+			a.closeChartFocus()
 		}
 	case "window-left":
-		if a.detail {
+		if a.chartFocus {
 			a.window = (a.window + len(detailWindows) - 1) % len(detailWindows)
 			a.scroll = 0
+		} else if a.detail {
+			a.window = (a.window + len(detailWindows) - 1) % len(detailWindows)
+			a.scroll = 0
+			a.closeChartFocus()
 		}
 	case "window-right":
-		if a.detail {
+		if a.chartFocus {
 			a.window = (a.window + 1) % len(detailWindows)
 			a.scroll = 0
+		} else if a.detail {
+			a.window = (a.window + 1) % len(detailWindows)
+			a.scroll = 0
+			a.closeChartFocus()
 		}
 	}
 	a.clampSelection()
@@ -322,6 +402,49 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 	if a.detail && (previous != a.selected || previousTab != a.tab || previousWindow != a.window || a.tabNeedsDetail()) {
 		a.ensureSelectedDetail(ctx)
 	}
+}
+
+func (a *App) openSearch() {
+	a.searchEditing = true
+	a.searchDraft = a.searchQuery
+	a.notice = ""
+}
+
+func (a *App) handleSearchKey(key keyEvent) {
+	selected := a.selectedNodeUUID()
+	switch key.name {
+	case "force-quit":
+		a.quit = true
+	case "open":
+		if key.text == "" {
+			a.searchQuery = strings.TrimSpace(a.searchDraft)
+			a.searchEditing = false
+		} else {
+			a.searchDraft += key.text
+		}
+	case "back":
+		if key.text == "" {
+			a.searchDraft = a.searchQuery
+			a.searchEditing = false
+		} else {
+			a.searchDraft += key.text
+		}
+	case "backspace":
+		a.searchDraft = dropLastRune(a.searchDraft)
+	default:
+		if key.text != "" {
+			a.searchDraft += key.text
+		}
+	}
+	a.restoreSelection(selected)
+}
+
+func dropLastRune(value string) string {
+	if value == "" {
+		return ""
+	}
+	runes := []rune(value)
+	return string(runes[:len(runes)-1])
 }
 
 func isMouseKey(name string) bool {
@@ -353,6 +476,7 @@ func (a *App) handleSettingsKey(key keyEvent) {
 		a.adjustSelectedSetting(1)
 	case "ascii":
 		a.style.ASCII = !a.style.ASCII
+		a.persistSettings()
 	}
 }
 
@@ -368,7 +492,7 @@ func (a *App) detailScrollStep() int {
 }
 
 func (a *App) clampSelection() {
-	count := len(a.snapshot.Nodes)
+	count := len(a.viewNodes())
 	if count == 0 {
 		a.selected = 0
 		a.scroll = 0

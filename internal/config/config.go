@@ -22,18 +22,26 @@ type Config struct {
 	Timeout  string `json:"timeout"`
 	Mode     string `json:"mode"`
 	// RealtimePoints limits realtime chart samples. 0 keeps the auto strategy.
-	RealtimePoints int    `json:"realtime_points,omitempty"`
-	ASCII          bool   `json:"ascii"`
-	NoColor        bool   `json:"no_color"`
-	ChartYAxis     string `json:"chart_y_axis"`
+	RealtimePoints int     `json:"realtime_points,omitempty"`
+	ASCII          bool    `json:"ascii"`
+	NoColor        bool    `json:"no_color"`
+	ChartYAxis     string  `json:"chart_y_axis"`
+	WarnCPU        float64 `json:"warn_cpu"`
+	WarnRAM        float64 `json:"warn_ram"`
+	WarnDisk       float64 `json:"warn_disk"`
+	WarnExpiryDays int     `json:"warn_expiry_days"`
 }
 
 func Default() Config {
 	return Config{
-		Interval:   "5s",
-		Timeout:    "10s",
-		Mode:       "sheet",
-		ChartYAxis: "absolute",
+		Interval:       "5s",
+		Timeout:        "10s",
+		Mode:           "sheet",
+		ChartYAxis:     "absolute",
+		WarnCPU:        90,
+		WarnRAM:        85,
+		WarnDisk:       90,
+		WarnExpiryDays: 7,
 	}
 }
 
@@ -108,6 +116,18 @@ func (c Config) WithDefaults() Config {
 	if strings.TrimSpace(c.ChartYAxis) == "" {
 		c.ChartYAxis = defaults.ChartYAxis
 	}
+	if c.WarnCPU == 0 {
+		c.WarnCPU = defaults.WarnCPU
+	}
+	if c.WarnRAM == 0 {
+		c.WarnRAM = defaults.WarnRAM
+	}
+	if c.WarnDisk == 0 {
+		c.WarnDisk = defaults.WarnDisk
+	}
+	if c.WarnExpiryDays == 0 {
+		c.WarnExpiryDays = defaults.WarnExpiryDays
+	}
 	return c
 }
 
@@ -130,6 +150,18 @@ func (c Config) Validate() error {
 	case "absolute", "relative":
 	default:
 		return fmt.Errorf("invalid config chart_y_axis %q: use absolute or relative", c.ChartYAxis)
+	}
+	if err := validatePercent("warn_cpu", c.WarnCPU); err != nil {
+		return err
+	}
+	if err := validatePercent("warn_ram", c.WarnRAM); err != nil {
+		return err
+	}
+	if err := validatePercent("warn_disk", c.WarnDisk); err != nil {
+		return err
+	}
+	if c.WarnExpiryDays <= 0 {
+		return fmt.Errorf("invalid config warn_expiry_days %d: use a positive number", c.WarnExpiryDays)
 	}
 	return nil
 }
@@ -178,6 +210,30 @@ func Set(cfg Config, key string, value string) (Config, error) {
 		default:
 			return cfg, fmt.Errorf("invalid chart_y_axis %q", value)
 		}
+	case "warn_cpu", "warn-cpu":
+		parsed, err := parsePercent(value)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid warn_cpu %q", value)
+		}
+		cfg.WarnCPU = parsed
+	case "warn_ram", "warn-ram":
+		parsed, err := parsePercent(value)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid warn_ram %q", value)
+		}
+		cfg.WarnRAM = parsed
+	case "warn_disk", "warn-disk":
+		parsed, err := parsePercent(value)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid warn_disk %q", value)
+		}
+		cfg.WarnDisk = parsed
+	case "warn_expiry_days", "warn-expiry-days":
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed <= 0 {
+			return cfg, fmt.Errorf("invalid warn_expiry_days %q", value)
+		}
+		cfg.WarnExpiryDays = parsed
 	case "ascii":
 		parsed, err := parseBool(value)
 		if err != nil {
@@ -195,6 +251,24 @@ func Set(cfg Config, key string, value string) (Config, error) {
 	}
 	cfg = cfg.WithDefaults()
 	return cfg, cfg.Validate()
+}
+
+func parsePercent(value string) (float64, error) {
+	parsed, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(value), "%"), 64)
+	if err != nil {
+		return 0, err
+	}
+	return parsed, validatePercent("", parsed)
+}
+
+func validatePercent(name string, value float64) error {
+	if value <= 0 || value > 100 {
+		if name == "" {
+			name = "percent"
+		}
+		return fmt.Errorf("invalid config %s %.1f: use a value from 1 to 100", name, value)
+	}
+	return nil
 }
 
 func parseBool(value string) (bool, error) {

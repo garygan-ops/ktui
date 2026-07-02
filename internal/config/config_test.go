@@ -72,11 +72,48 @@ func TestSetChartYAxis(t *testing.T) {
 	}
 }
 
+func TestDefaultWarningThresholds(t *testing.T) {
+	cfg := Default()
+	if cfg.WarnCPU != 90 || cfg.WarnRAM != 85 || cfg.WarnDisk != 90 || cfg.WarnExpiryDays != 7 {
+		t.Fatalf("warning defaults = cpu %.1f ram %.1f disk %.1f expiry %d", cfg.WarnCPU, cfg.WarnRAM, cfg.WarnDisk, cfg.WarnExpiryDays)
+	}
+}
+
+func TestSetWarningThresholds(t *testing.T) {
+	cfg, err := Set(Default(), "warn-cpu", "85")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Set(cfg, "warn-ram", "80%")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Set(cfg, "warn-disk", "95")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Set(cfg, "warn-expiry-days", "14")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WarnCPU != 85 || cfg.WarnRAM != 80 || cfg.WarnDisk != 95 || cfg.WarnExpiryDays != 14 {
+		t.Fatalf("warning thresholds = %+v", cfg)
+	}
+}
+
 func TestValidateRejectsNegativeRealtimePoints(t *testing.T) {
 	cfg := Default()
 	cfg.RealtimePoints = -1
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected negative realtime_points to be rejected")
+	}
+}
+
+func TestValidateRejectsInvalidWarningThreshold(t *testing.T) {
+	cfg := Default()
+	cfg.WarnCPU = 101
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected invalid warn_cpu to be rejected")
 	}
 }
 
