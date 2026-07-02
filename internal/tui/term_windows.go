@@ -59,7 +59,7 @@ func enterRawMode() (*terminalState, error) {
 		return nil, err
 	}
 
-	fmt.Print("\x1b[?1049h\x1b[?25l\x1b[?7l")
+	fmt.Print("\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1000h\x1b[?1006h")
 	return &terminalState{
 		input:      input,
 		output:     output,
@@ -74,7 +74,7 @@ func (s *terminalState) restore() {
 	}
 	_ = setConsoleMode(s.input, s.inputMode)
 	_ = setConsoleMode(s.output, s.outputMode)
-	fmt.Print("\x1b[?7h\x1b[?25h\x1b[?1049l\x1b[0m")
+	fmt.Print("\x1b[?1006l\x1b[?1000l\x1b[?7h\x1b[?25h\x1b[?1049l\x1b[0m")
 }
 
 func installSignalRestore(state *terminalState) func() {

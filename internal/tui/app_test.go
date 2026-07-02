@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,6 +55,59 @@ func TestNewWithOptionsUsesTimeoutOptions(t *testing.T) {
 	}
 	if app.realtimePoints != 150 {
 		t.Fatalf("realtimePoints = %d", app.realtimePoints)
+	}
+}
+
+func TestStartUpdateCheckRecordsAvailableUpdate(t *testing.T) {
+	app := NewWithOptions(nil, Options{
+		CheckUpdate: func(ctx context.Context) (UpdateCheckResult, error) {
+			return UpdateCheckResult{LatestVersion: "v0.2.0", AssetName: "ktui_v0.2.0_linux_amd64.tar.gz", Available: true}, nil
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app.startUpdateCheck(ctx)
+	result := <-app.updateCh
+	app.update.Checking = false
+	app.update.Checked = true
+	app.update.Err = result.err
+	app.update.Available = result.result.Available
+	app.update.Latest = result.result.LatestVersion
+
+	if !app.update.Available || app.update.Latest != "v0.2.0" {
+		t.Fatalf("update = %+v, want available v0.2.0", app.update)
+	}
+}
+
+func TestUpdateAvailableFooterAndHint(t *testing.T) {
+	app := NewWithOptions(nil, Options{})
+	app.update.Available = true
+	app.update.Latest = "v0.2.0"
+
+	if !strings.Contains(app.footerText(), "u update") {
+		t.Fatalf("footer = %q, want update action", app.footerText())
+	}
+
+	app.handleKey(context.Background(), keyEvent{name: "update-hint"})
+	if !strings.Contains(app.notice, "ktui update") {
+		t.Fatalf("notice = %q, want update command", app.notice)
+	}
+}
+
+func TestUpdateFooterClickShowsHint(t *testing.T) {
+	app := NewWithOptions(nil, Options{})
+	app.update.Available = true
+	app.update.Latest = "v0.2.0"
+	_, height := terminalSize()
+	x, _, ok := footerLabelBounds(app.footerText(), "u update")
+	if !ok {
+		t.Fatal("missing u update footer label")
+	}
+
+	app.handleKey(context.Background(), keyEvent{name: "mouse-left", x: x, y: height})
+	if !strings.Contains(app.notice, "v0.2.0") {
+		t.Fatalf("notice = %q, want update hint", app.notice)
 	}
 }
 

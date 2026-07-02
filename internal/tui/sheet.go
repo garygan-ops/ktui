@@ -19,21 +19,8 @@ func (a *App) renderSheetBody(width int, bodyHeight int) []string {
 		return fillBody([]string{"No nodes returned by Komari."}, width, bodyHeight)
 	}
 
-	cardHeight := 9
-	gap := 2
-	minCardWidth := 40
-	columns := max(1, (width+gap)/(minCardWidth+gap))
-	for columns > 1 {
-		cardWidth := (width - gap*(columns-1)) / columns
-		if cardWidth >= minCardWidth {
-			break
-		}
-		columns--
-	}
-	cardWidth := width
-	if columns > 1 {
-		cardWidth = (width - gap*(columns-1)) / columns
-	}
+	cardHeight := sheetCardHeight
+	columns, cardWidth := sheetLayout(width)
 
 	rowsVisible := max(1, bodyHeight/cardHeight)
 	selectedRow := a.selected / columns
@@ -68,7 +55,7 @@ func (a *App) renderSheetBody(width int, bodyHeight int) []string {
 			var line strings.Builder
 			for col, card := range rowCards {
 				if col > 0 {
-					line.WriteString(strings.Repeat(" ", gap))
+					line.WriteString(strings.Repeat(" ", sheetCardGap))
 				}
 				line.WriteString(card[lineIndex])
 			}

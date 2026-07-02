@@ -115,6 +115,12 @@ func (a *App) headerLines(width int) []string {
 	context := strings.Join(contextParts, "  ")
 	if a.err != nil {
 		context = a.style.red("ERROR " + a.err.Error())
+	} else if a.notice != "" {
+		context = a.style.yellow(a.notice)
+	} else if a.update.Available {
+		context = a.style.yellow(fmt.Sprintf("UPDATE %s available  run `ktui update`", valueOr(a.update.Latest, "latest")))
+	} else if a.update.Checking {
+		context = a.style.dim("checking for updates...")
 	}
 
 	lines := []string{
@@ -148,13 +154,25 @@ func headerCompactUnit(value string) string {
 }
 
 func (a *App) footerLine(width int) string {
-	footer := " ↑↓/jk select   Enter detail   s settings   m mode   r refresh   a ascii   q quit "
+	return a.style.inverse(cleanLine(a.footerText(), width))
+}
+
+func (a *App) footerText() string {
 	if a.settings {
-		footer = " Esc/q back   ↑↓/jk select   ←→/h/l adjust   Enter toggle "
-	} else if a.detail {
-		footer = " Esc/q back   1-5/h/l tabs   [ ] window   j/k scroll   s settings   r refresh "
+		return " Esc/q back   ↑↓/jk select   ←→/h/l adjust   Enter toggle "
 	}
-	return a.style.inverse(cleanLine(footer, width))
+	if a.detail {
+		footer := " Back(Esc/q)   1-5/h/l tabs   [ ] window   j/k scroll   s settings   r refresh "
+		if a.update.Available {
+			footer += "  u update "
+		}
+		return footer
+	}
+	footer := " ↑↓/jk select   Enter detail   s settings   m mode   r refresh   a ascii   q quit "
+	if a.update.Available {
+		footer += "  u update "
+	}
+	return footer
 }
 
 func (a *App) adjustScroll(visibleRows int) {

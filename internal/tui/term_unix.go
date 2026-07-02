@@ -30,7 +30,7 @@ func enterRawMode() (*terminalState, error) {
 	if err := ioctlSetTermios(fd, raw); err != nil {
 		return nil, err
 	}
-	fmt.Print("\x1b[?1049h\x1b[?25l\x1b[?7l")
+	fmt.Print("\x1b[?1049h\x1b[?25l\x1b[?7l\x1b[?1000h\x1b[?1006h")
 	return &terminalState{termios: old}, nil
 }
 
@@ -39,7 +39,7 @@ func (s *terminalState) restore() {
 		return
 	}
 	_ = ioctlSetTermios(int(os.Stdin.Fd()), s.termios)
-	fmt.Print("\x1b[?7h\x1b[?25h\x1b[?1049l\x1b[0m")
+	fmt.Print("\x1b[?1006l\x1b[?1000l\x1b[?7h\x1b[?25h\x1b[?1049l\x1b[0m")
 }
 
 func installSignalRestore(state *terminalState) func() {

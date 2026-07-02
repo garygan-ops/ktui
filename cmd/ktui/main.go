@@ -158,6 +158,7 @@ func main() {
 		RealtimePoints:  realtimePoints,
 		ChartYAxisMode:  chartYAxis,
 		SaveSettings:    saveTUISettings,
+		CheckUpdate:     checkSoftwareUpdate,
 		ASCII:           ascii,
 		NoColor:         noColor,
 		Mode:            mode,
@@ -217,6 +218,22 @@ func saveTUISettings(settings tui.PersistentSettings) error {
 	cfg.NoColor = settings.NoColor
 	_, err = config.Save(cfg)
 	return err
+}
+
+func checkSoftwareUpdate(ctx context.Context) (tui.UpdateCheckResult, error) {
+	result, err := update.Check(ctx, update.Options{
+		CurrentVersion: version,
+		Timeout:        8 * time.Second,
+	})
+	if err != nil {
+		return tui.UpdateCheckResult{}, err
+	}
+	return tui.UpdateCheckResult{
+		CurrentVersion: result.CurrentVersion,
+		LatestVersion:  result.LatestVersion,
+		AssetName:      result.AssetName,
+		Available:      result.Available,
+	}, nil
 }
 
 func handleConfig(args []string) error {
@@ -453,6 +470,9 @@ func printKeysHelp() {
 
 List layer:
   Up/k, Down/j       select server
+  Mouse wheel        select previous/next server
+  Mouse click        open server detail
+  Footer click       settings/mode/refresh/ascii/quit
   PgUp, PgDn         jump faster
   Enter/o            open selected server detail
   s                  open settings
@@ -460,19 +480,27 @@ List layer:
   r                  refresh now
   d                  open or reload selected server detail data
   a                  toggle ASCII compatibility mode
+  u                  show update command when an update is available
   q, Ctrl-C          quit
 
 Detail layer:
   Esc, b, q          return to list layer
+  Mouse click Back   return to list layer
   h/l, 1-5, Tab      switch detail tabs
   [, ]               switch time window
   Up/k, Down/j       scroll one card
+  Mouse wheel        scroll detail cards
+  Mouse click        switch tabs or time window
+  Footer click       Back/settings/refresh
   s                  open settings
+  u                  show update command when an update is available
   PgUp, PgDn         scroll faster
 
 Settings layer:
   Esc, q, s          return to previous layer
   Up/k, Down/j       select setting
+  Mouse wheel/click  select setting
+  Footer click       back/adjust/toggle
   Left/h, Right/l    adjust value
   Enter              toggle or advance value
 `)

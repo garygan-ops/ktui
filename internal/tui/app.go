@@ -16,6 +16,7 @@ type App struct {
 	detailCacheTTL  time.Duration
 	realtimePoints  int
 	saveSettings    func(PersistentSettings) error
+	checkUpdate     func(context.Context) (UpdateCheckResult, error)
 	style           Style
 	mode            Mode
 
@@ -32,11 +33,13 @@ type App struct {
 	settingsURL       string
 	settingsAPIKey    string
 	chartYAxisMode    chartYAxisMode
+	notice            string
 
 	snapshot komari.Snapshot
 	err      error
 	loading  bool
 	fetching bool
+	update   updateState
 	// At most one refresh is queued while an in-flight request is finishing.
 	refreshPending  bool
 	intervalChanged bool
@@ -53,6 +56,7 @@ type App struct {
 	refreshCh chan struct{}
 	resultCh  chan fetchResult
 	detailCh  chan detailResult
+	updateCh  chan updateResult
 	keyCh     chan keyEvent
 }
 
@@ -66,9 +70,17 @@ type Options struct {
 	RealtimePoints  int
 	ChartYAxisMode  string
 	SaveSettings    func(PersistentSettings) error
+	CheckUpdate     func(context.Context) (UpdateCheckResult, error)
 	ASCII           bool
 	NoColor         bool
 	Mode            Mode
+}
+
+type UpdateCheckResult struct {
+	CurrentVersion string
+	LatestVersion  string
+	AssetName      string
+	Available      bool
 }
 
 type PersistentSettings struct {
@@ -117,6 +129,20 @@ type detailResult struct {
 	detail nodeDetail
 }
 
+type updateResult struct {
+	result UpdateCheckResult
+	err    error
+}
+
+type updateState struct {
+	Checking  bool
+	Checked   bool
+	Available bool
+	Latest    string
+	AssetName string
+	Err       error
+}
+
 type detailKey struct {
 	UUID   string
 	Window int
@@ -124,6 +150,8 @@ type detailKey struct {
 
 type keyEvent struct {
 	name string
+	x    int
+	y    int
 }
 
 var tabNames = []string{"overview", "node", "history", "ping", "meta"}
@@ -209,6 +237,7 @@ func NewWithOptions(client *komari.Client, opts Options) *App {
 		detailTimeout:   opts.DetailTimeout,
 		detailCacheTTL:  opts.DetailCacheTTL,
 		realtimePoints:  opts.RealtimePoints,
+		checkUpdate:     opts.CheckUpdate,
 		settingsURL:     opts.URL,
 		settingsAPIKey:  opts.APIKey,
 		style:           Style{ASCII: opts.ASCII, NoColor: opts.NoColor},
@@ -217,6 +246,7 @@ func NewWithOptions(client *komari.Client, opts Options) *App {
 		refreshCh:       make(chan struct{}, 2),
 		resultCh:        make(chan fetchResult, 2),
 		detailCh:        make(chan detailResult, 4),
+		updateCh:        make(chan updateResult, 1),
 		keyCh:           make(chan keyEvent, 16),
 		loading:         true,
 		nodeDetail:      map[detailKey]nodeDetail{},
@@ -238,6 +268,7 @@ func (a *App) Run(ctx context.Context) error {
 	defer stopResize()
 
 	go a.readKeys(ctx)
+	a.startUpdateCheck(ctx)
 	a.requestRefresh()
 
 	ticker := time.NewTicker(a.refreshInterval)
@@ -289,6 +320,19 @@ func (a *App) Run(ctx context.Context) error {
 		case detail := <-a.detailCh:
 			a.nodeDetail[detail.key] = detail.detail
 			a.render()
+		case update := <-a.updateCh:
+			a.update.Checking = false
+			a.update.Checked = true
+			a.update.Err = update.err
+			if update.err == nil {
+				a.update.Available = update.result.Available
+				a.update.Latest = update.result.LatestVersion
+				a.update.AssetName = update.result.AssetName
+				if update.result.Available {
+					a.notice = ""
+				}
+			}
+			a.render()
 		case key := <-a.keyCh:
 			a.handleKey(ctx, key)
 			a.render()
@@ -297,6 +341,20 @@ func (a *App) Run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (a *App) startUpdateCheck(ctx context.Context) {
+	if a.checkUpdate == nil {
+		return
+	}
+	a.update.Checking = true
+	go func() {
+		result, err := a.checkUpdate(ctx)
+		select {
+		case a.updateCh <- updateResult{result: result, err: err}:
+		case <-ctx.Done():
+		}
+	}()
 }
 
 type refreshTicker interface {
@@ -360,7 +418,7 @@ func (a *App) fetchSnapshot(ctx context.Context, previous komari.Snapshot, fullF
 }
 
 func (a *App) fetchDetail(ctx context.Context, uuid string, force bool) {
-	if uuid == "" {
+	if uuid == "" || a.client == nil {
 		return
 	}
 	key := detailKey{UUID: uuid, Window: a.window}

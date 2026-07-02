@@ -24,9 +24,43 @@ https://www.nodeseek.com/post-710243-1
 - 支持 Komari API key，能读取 IPv4、IPv6、过期时间等后台节点详情
 - 支持配置文件，默认持久化到系统用户配置目录
 - 支持终端窗口大小变化，窄窗口下会自动裁剪和滚动
+- 支持鼠标和触控板：列表点击选择、滚轮滚动，详情页可滚动并点击切换标签/窗口
 - 支持 ASCII / 无颜色兼容模式，适合 Unicode 显示异常的终端
+- 支持远程一行安装脚本，自动识别系统和 CPU 架构并下载对应 Release
 
-## 构建
+## 安装
+
+Linux / macOS：
+
+```sh
+curl -fsSL https://gitea.bytevibe.dev/gary/ktui/raw/branch/main/install.sh | sh
+```
+
+Windows PowerShell：
+
+```powershell
+irm https://gitea.bytevibe.dev/gary/ktui/raw/branch/main/install.ps1 | iex
+```
+
+默认安装位置：
+
+- Linux / macOS：`~/.local/bin/ktui`
+- Windows：`%LOCALAPPDATA%\ktui\bin\ktui.exe`
+
+安装指定版本或目录：
+
+```sh
+curl -fsSL https://gitea.bytevibe.dev/gary/ktui/raw/branch/main/install.sh | KTUI_VERSION=v0.1.0 sh
+curl -fsSL https://gitea.bytevibe.dev/gary/ktui/raw/branch/main/install.sh | KTUI_INSTALL_DIR=/usr/local/bin sh
+```
+
+私有仓库或需要认证的 Release 可以传 token：
+
+```sh
+curl -fsSL https://gitea.bytevibe.dev/gary/ktui/raw/branch/main/install.sh | KTUI_UPDATE_TOKEN=your_token sh
+```
+
+## 从源码构建
 
 需要 Go 1.26 或更新版本。
 
@@ -63,6 +97,12 @@ go run ./cmd/ktui
 ```sh
 ./ktui update --check
 ./ktui update
+```
+
+进入 TUI 时会自动在后台检查是否有新版本。发现新版本后，界面顶部会提示 `UPDATE ... available`，底部会出现 `u update`；按 `u` 或点击该提示会显示更新命令。实际更新请退出 TUI 后运行：
+
+```sh
+ktui update
 ```
 
 指定 Komari 地址：
@@ -208,6 +248,8 @@ EXP -
 
 - `↑` / `k`：列表页选择上一个节点；详情页向上滚动一张卡片
 - `↓` / `j`：列表页选择下一个节点；详情页向下滚动一张卡片
+- 鼠标/触控板滚轮：列表页切换选择；详情页滚动；设置页切换设置项
+- 鼠标点击：列表页打开节点详情；底部命令可直接点击；详情页点击底部 `Back` 返回，点击标签/时间窗口切换；设置页选择设置项并可点击底部调整/返回
 - `PgUp` / `PgDn`：快速滚动列表或详情页
 - `Enter` / `o`：打开选中节点的详情页
 - `Esc` / `b` / `q`：从详情页返回列表页
@@ -217,6 +259,7 @@ EXP -
 - `r`：立即刷新
 - `d`：打开或重新加载选中节点的详情数据
 - `a`：切换 ASCII 兼容模式
+- `u`：有新版本时显示更新命令
 - `q` / `Ctrl-C`：在列表页退出
 
 ## 版本信息

@@ -4,10 +4,12 @@ import (
 	"context"
 	"io"
 	"os"
+	"strconv"
 )
 
 func (a *App) readKeys(ctx context.Context) {
 	buf := make([]byte, 8)
+	pending := make([]byte, 0, 32)
 	for {
 		select {
 		case <-ctx.Done():
@@ -24,7 +26,10 @@ func (a *App) readKeys(ctx context.Context) {
 		if n == 0 {
 			continue
 		}
-		for _, key := range parseKeys(buf[:n]) {
+		pending = append(pending, buf[:n]...)
+		keys, rest := parseKeysWithRemainder(pending)
+		pending = rest
+		for _, key := range keys {
 			select {
 			case a.keyCh <- key:
 			default:
@@ -34,6 +39,11 @@ func (a *App) readKeys(ctx context.Context) {
 }
 
 func parseKeys(data []byte) []keyEvent {
+	keys, _ := parseKeysWithRemainder(data)
+	return keys
+}
+
+func parseKeysWithRemainder(data []byte) ([]keyEvent, []byte) {
 	out := make([]keyEvent, 0, len(data))
 	for i := 0; i < len(data); i++ {
 		switch data[i] {
@@ -57,6 +67,8 @@ func parseKeys(data []byte) []keyEvent {
 			out = append(out, keyEvent{name: "mode"})
 		case 's', 'S':
 			out = append(out, keyEvent{name: "settings"})
+		case 'u', 'U':
+			out = append(out, keyEvent{name: "update-hint"})
 		case 'j':
 			out = append(out, keyEvent{name: "down"})
 		case 'k':
@@ -79,6 +91,17 @@ func parseKeys(data []byte) []keyEvent {
 			out = append(out, keyEvent{name: "window-right"})
 		case 0x1b:
 			if i+2 < len(data) && data[i+1] == '[' {
+				if data[i+2] == '<' {
+					key, next, ok, incomplete := parseSGRMouse(data, i)
+					if incomplete {
+						return out, append([]byte(nil), data[i:]...)
+					}
+					if ok {
+						out = append(out, key)
+						i = next - 1
+					}
+					continue
+				}
 				switch data[i+2] {
 				case 'A':
 					out = append(out, keyEvent{name: "up"})
@@ -112,13 +135,74 @@ func parseKeys(data []byte) []keyEvent {
 			}
 		}
 	}
-	return out
+	return out, nil
+}
+
+func parseSGRMouse(data []byte, start int) (keyEvent, int, bool, bool) {
+	i := start + 3
+	fieldStart := i
+	values := make([]int, 0, 3)
+	for ; i < len(data); i++ {
+		switch data[i] {
+		case ';':
+			value, ok := parseMouseNumber(data[fieldStart:i])
+			if !ok {
+				return keyEvent{}, i + 1, false, false
+			}
+			values = append(values, value)
+			fieldStart = i + 1
+		case 'M', 'm':
+			value, ok := parseMouseNumber(data[fieldStart:i])
+			if !ok {
+				return keyEvent{}, i + 1, false, false
+			}
+			values = append(values, value)
+			if len(values) != 3 {
+				return keyEvent{}, i + 1, false, false
+			}
+			return mouseKey(values[0], values[1], values[2], data[i] == 'm'), i + 1, true, false
+		}
+	}
+	return keyEvent{}, len(data), false, true
+}
+
+func parseMouseNumber(data []byte) (int, bool) {
+	if len(data) == 0 {
+		return 0, false
+	}
+	value, err := strconv.Atoi(string(data))
+	if err != nil {
+		return 0, false
+	}
+	return value, true
+}
+
+func mouseKey(button int, x int, y int, release bool) keyEvent {
+	switch button & 0b11_000000 {
+	case 64:
+		if button&1 == 0 {
+			return keyEvent{name: "mouse-wheel-up", x: x, y: y}
+		}
+		return keyEvent{name: "mouse-wheel-down", x: x, y: y}
+	}
+	if !release && button&0b11 == 0 {
+		return keyEvent{name: "mouse-left", x: x, y: y}
+	}
+	return keyEvent{name: "mouse-ignore", x: x, y: y}
 }
 
 func (a *App) handleKey(ctx context.Context, key keyEvent) {
 	previous := a.selected
 	previousTab := a.tab
 	previousWindow := a.window
+	if isMouseKey(key.name) {
+		a.handleMouse(ctx, key)
+		a.clampSelection()
+		if a.scroll < 0 {
+			a.scroll = 0
+		}
+		return
+	}
 	if a.settings {
 		a.handleSettingsKey(key)
 		return
@@ -139,10 +223,9 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 			a.scroll = 0
 		}
 	case "settings":
-		a.settingsWasDetail = a.detail
-		a.settings = true
-		a.detail = false
-		a.scroll = 0
+		a.openSettings()
+	case "update-hint":
+		a.showUpdateHint()
 	case "open":
 		if len(a.snapshot.Nodes) > 0 {
 			a.detail = true
@@ -241,15 +324,21 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 	}
 }
 
+func isMouseKey(name string) bool {
+	switch name {
+	case "mouse-left", "mouse-wheel-up", "mouse-wheel-down", "mouse-ignore":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *App) handleSettingsKey(key keyEvent) {
 	switch key.name {
 	case "force-quit":
 		a.quit = true
 	case "quit", "back", "settings":
-		a.settings = false
-		a.detail = a.settingsWasDetail
-		a.settingsWasDetail = false
-		a.scroll = 0
+		a.closeSettings()
 	case "up":
 		a.moveSettingsSelection(-1)
 	case "down":

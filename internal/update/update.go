@@ -33,6 +33,13 @@ type Options struct {
 	Stdout         io.Writer
 }
 
+type CheckResult struct {
+	CurrentVersion string
+	LatestVersion  string
+	AssetName      string
+	Available      bool
+}
+
 type release struct {
 	TagName string  `json:"tag_name"`
 	Name    string  `json:"name"`
@@ -118,6 +125,42 @@ func Run(ctx context.Context, opts Options) error {
 
 	fmt.Fprintf(opts.Stdout, "updated ktui to %s\n", displayVersion(rel.TagName))
 	return nil
+}
+
+func Check(ctx context.Context, opts Options) (CheckResult, error) {
+	if opts.APIBaseURL == "" {
+		opts.APIBaseURL = DefaultAPIBaseURL
+	}
+	if opts.Timeout <= 0 {
+		opts.Timeout = 10 * time.Second
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, opts.Timeout)
+	defer cancel()
+
+	client := &http.Client{Timeout: opts.Timeout}
+	rel, err := fetchRelease(ctx, client, opts.APIBaseURL, opts.TargetVersion)
+	if err != nil {
+		return CheckResult{}, err
+	}
+	if rel.TagName == "" {
+		return CheckResult{}, errors.New("release response does not include a tag name")
+	}
+
+	result := CheckResult{
+		CurrentVersion: opts.CurrentVersion,
+		LatestVersion:  displayVersion(rel.TagName),
+	}
+	if sameVersion(opts.CurrentVersion, rel.TagName) {
+		return result, nil
+	}
+	archiveAsset, err := selectArchiveAsset(rel.Assets, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return CheckResult{}, err
+	}
+	result.AssetName = archiveAsset.Name
+	result.Available = true
+	return result, nil
 }
 
 func fetchRelease(ctx context.Context, client *http.Client, apiBaseURL, tag string) (release, error) {

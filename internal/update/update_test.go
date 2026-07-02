@@ -1,6 +1,13 @@
 package update
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"runtime"
+	"testing"
+)
 
 func TestSelectArchiveAsset(t *testing.T) {
 	assets := []asset{
@@ -46,4 +53,63 @@ func TestSameVersion(t *testing.T) {
 	if sameVersion("dev", "v0.1.0") {
 		t.Fatal("dev version should never be considered up to date")
 	}
+}
+
+func TestCheckReportsAvailableUpdate(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/releases/latest" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(release{
+			TagName: "v0.2.0",
+			Assets: []asset{
+				{Name: "ktui_v0.2.0_" + runtime.GOOS + "_" + runtime.GOARCH + archiveExt(), BrowserDownloadURL: serverURL(r, "/download")},
+			},
+		})
+	}))
+	defer server.Close()
+
+	result, err := Check(context.Background(), Options{
+		APIBaseURL:     server.URL + "/api",
+		CurrentVersion: "v0.1.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Available || result.LatestVersion != "v0.2.0" || result.AssetName == "" {
+		t.Fatalf("result = %+v, want available v0.2.0", result)
+	}
+}
+
+func TestCheckIgnoresSameVersion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(release{TagName: "v0.1.0"})
+	}))
+	defer server.Close()
+
+	result, err := Check(context.Background(), Options{
+		APIBaseURL:     server.URL,
+		CurrentVersion: "0.1.0",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Available {
+		t.Fatalf("result = %+v, want no update", result)
+	}
+}
+
+func archiveExt() string {
+	if runtime.GOOS == "windows" {
+		return ".zip"
+	}
+	return ".tar.gz"
+}
+
+func serverURL(r *http.Request, path string) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host + path
 }
