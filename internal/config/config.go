@@ -21,15 +21,19 @@ type Config struct {
 	Interval string `json:"interval"`
 	Timeout  string `json:"timeout"`
 	Mode     string `json:"mode"`
-	ASCII    bool   `json:"ascii"`
-	NoColor  bool   `json:"no_color"`
+	// RealtimePoints limits realtime chart samples. 0 keeps the auto strategy.
+	RealtimePoints int    `json:"realtime_points,omitempty"`
+	ASCII          bool   `json:"ascii"`
+	NoColor        bool   `json:"no_color"`
+	ChartYAxis     string `json:"chart_y_axis"`
 }
 
 func Default() Config {
 	return Config{
-		Interval: "5s",
-		Timeout:  "10s",
-		Mode:     "sheet",
+		Interval:   "5s",
+		Timeout:    "10s",
+		Mode:       "sheet",
+		ChartYAxis: "absolute",
 	}
 }
 
@@ -101,6 +105,9 @@ func (c Config) WithDefaults() Config {
 	if strings.TrimSpace(c.Mode) == "" {
 		c.Mode = defaults.Mode
 	}
+	if strings.TrimSpace(c.ChartYAxis) == "" {
+		c.ChartYAxis = defaults.ChartYAxis
+	}
 	return c
 }
 
@@ -115,6 +122,14 @@ func (c Config) Validate() error {
 	case "sheet", "line":
 	default:
 		return fmt.Errorf("invalid config mode %q: use sheet or line", c.Mode)
+	}
+	if c.RealtimePoints < 0 {
+		return fmt.Errorf("invalid config realtime_points %d: use 0 or a positive number", c.RealtimePoints)
+	}
+	switch c.ChartYAxis {
+	case "absolute", "relative":
+	default:
+		return fmt.Errorf("invalid config chart_y_axis %q: use absolute or relative", c.ChartYAxis)
 	}
 	return nil
 }
@@ -149,6 +164,20 @@ func Set(cfg Config, key string, value string) (Config, error) {
 		cfg.Timeout = value
 	case "mode":
 		cfg.Mode = value
+	case "realtime_points", "realtime-points":
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 0 {
+			return cfg, fmt.Errorf("invalid realtime_points %q", value)
+		}
+		cfg.RealtimePoints = parsed
+	case "chart_y_axis", "chart-y-axis", "percent_y_axis", "percent-y-axis":
+		value = strings.ToLower(value)
+		switch value {
+		case "absolute", "relative":
+			cfg.ChartYAxis = value
+		default:
+			return cfg, fmt.Errorf("invalid chart_y_axis %q", value)
+		}
 	case "ascii":
 		parsed, err := parseBool(value)
 		if err != nil {

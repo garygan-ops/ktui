@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -74,15 +75,17 @@ func main() {
 	}
 
 	var (
-		baseURL   string
-		apiKey    string
-		interval  time.Duration
-		timeout   time.Duration
-		once      bool
-		ascii     bool
-		noColor   bool
-		lineMode  bool
-		sheetMode bool
+		baseURL        string
+		apiKey         string
+		interval       time.Duration
+		timeout        time.Duration
+		realtimePoints int
+		chartYAxis     string
+		once           bool
+		ascii          bool
+		noColor        bool
+		lineMode       bool
+		sheetMode      bool
 	)
 
 	flags := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
@@ -90,6 +93,8 @@ func main() {
 	flags.StringVar(&apiKey, "api-key", cfg.APIKey, "Komari API key (sent as Bearer token)")
 	flags.DurationVar(&interval, "interval", intervalDefault, "refresh interval")
 	flags.DurationVar(&timeout, "timeout", timeoutDefault, "HTTP timeout")
+	flags.IntVar(&realtimePoints, "realtime-points", cfg.RealtimePoints, "realtime chart sample limit, 0 auto")
+	flags.StringVar(&chartYAxis, "chart-y-axis", cfg.ChartYAxis, "percent chart Y axis mode: absolute or relative")
 	flags.BoolVar(&once, "once", false, "fetch once and print a summary without entering the TUI")
 	flags.BoolVar(&ascii, "ascii", cfg.ASCII, "use ASCII-only rendering for terminals/fonts with Unicode issues")
 	flags.BoolVar(&noColor, "no-color", cfg.NoColor, "disable ANSI color and inverse video")
@@ -102,6 +107,13 @@ func main() {
 	}
 	if flags.NArg() > 0 {
 		usageError(fmt.Errorf("unexpected argument %q", flags.Arg(0)))
+	}
+	if realtimePoints < 0 {
+		fatal(fmt.Errorf("--realtime-points must be 0 or a positive number"))
+	}
+	chartYAxis = strings.ToLower(strings.TrimSpace(chartYAxis))
+	if chartYAxis != "absolute" && chartYAxis != "relative" {
+		fatal(fmt.Errorf("--chart-y-axis must be absolute or relative"))
 	}
 
 	mode := tui.ModeSheet
@@ -138,9 +150,14 @@ func main() {
 	}
 
 	app := tui.NewWithOptions(client, tui.Options{
+		URL:             baseURL,
+		APIKey:          apiKey,
 		RefreshInterval: interval,
 		FetchTimeout:    timeout,
 		DetailTimeout:   timeout,
+		RealtimePoints:  realtimePoints,
+		ChartYAxisMode:  chartYAxis,
+		SaveSettings:    saveTUISettings,
 		ASCII:           ascii,
 		NoColor:         noColor,
 		Mode:            mode,
@@ -163,6 +180,17 @@ func applyEnv(cfg config.Config) config.Config {
 	if value := os.Getenv("KTUI_TIMEOUT"); value != "" {
 		cfg.Timeout = value
 	}
+	if value := os.Getenv("KTUI_REALTIME_POINTS"); value != "" {
+		points, err := strconv.Atoi(value)
+		if err != nil {
+			cfg.RealtimePoints = -1
+		} else {
+			cfg.RealtimePoints = points
+		}
+	}
+	if value := os.Getenv("KTUI_CHART_Y_AXIS"); value != "" {
+		cfg.ChartYAxis = strings.ToLower(strings.TrimSpace(value))
+	}
 	if value := os.Getenv("KTUI_MODE"); value != "" {
 		cfg.Mode = value
 	}
@@ -173,6 +201,22 @@ func applyEnv(cfg config.Config) config.Config {
 		cfg.NoColor = true
 	}
 	return cfg
+}
+
+func saveTUISettings(settings tui.PersistentSettings) error {
+	cfg, _, err := config.Load()
+	if err != nil {
+		return err
+	}
+	cfg.Interval = settings.Interval
+	cfg.Timeout = settings.Timeout
+	cfg.Mode = settings.Mode
+	cfg.RealtimePoints = settings.RealtimePoints
+	cfg.ChartYAxis = settings.ChartYAxisMode
+	cfg.ASCII = settings.ASCII
+	cfg.NoColor = settings.NoColor
+	_, err = config.Save(cfg)
+	return err
 }
 
 func handleConfig(args []string) error {
@@ -312,6 +356,10 @@ Flags:
   --api-key KEY     Komari API key, sent as a Bearer token
   --interval 5s     refresh interval
   --timeout 10s     HTTP timeout
+  --realtime-points N
+                   realtime chart sample limit, 0 auto
+  --chart-y-axis MODE
+                   percent chart Y axis mode: absolute or relative
   --sheet           show the boxed sheet layout
   --line            show one server block after another
   --ascii           use ASCII-only rendering
@@ -387,6 +435,10 @@ Keys:
   api-key   Komari API key
   interval  refresh interval, for example 5s
   timeout   HTTP timeout, for example 10s
+  realtime-points
+            realtime chart sample limit, 0 auto
+  chart-y-axis
+            percent chart Y axis mode: absolute or relative
   mode      sheet or line
   ascii     true or false
   no-color  true or false
@@ -403,6 +455,7 @@ List layer:
   Up/k, Down/j       select server
   PgUp, PgDn         jump faster
   Enter/o            open selected server detail
+  s                  open settings
   m                  switch line/sheet mode
   r                  refresh now
   d                  open or reload selected server detail data
@@ -414,7 +467,14 @@ Detail layer:
   h/l, 1-5, Tab      switch detail tabs
   [, ]               switch time window
   Up/k, Down/j       scroll one card
+  s                  open settings
   PgUp, PgDn         scroll faster
+
+Settings layer:
+  Esc, q, s          return to previous layer
+  Up/k, Down/j       select setting
+  Left/h, Right/l    adjust value
+  Enter              toggle or advance value
 `)
 }
 

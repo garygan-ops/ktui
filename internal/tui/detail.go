@@ -29,17 +29,19 @@ func (a *App) renderDetailBody(width int, bodyHeight int) []string {
 			chrome = chrome[:max(0, bodyHeight-1)]
 		}
 	}
-	if contentHeight >= detailCardHeight {
-		contentHeight = contentHeight / detailCardHeight * detailCardHeight
+	cardHeight := detailCardHeightFor(contentHeight)
+	a.cardStep = cardHeight
+	if contentHeight >= cardHeight {
+		contentHeight = contentHeight / cardHeight * cardHeight
 	}
 
-	content := a.detailContentLines(node, st, width)
-	if contentHeight >= detailCardHeight {
-		a.scroll = a.scroll / detailCardHeight * detailCardHeight
+	content := a.detailContentLines(node, st, width, cardHeight)
+	if contentHeight >= cardHeight {
+		a.scroll = a.scroll / cardHeight * cardHeight
 	}
 	maxScroll := max(0, len(content)-contentHeight)
-	if contentHeight >= detailCardHeight {
-		maxScroll = maxScroll / detailCardHeight * detailCardHeight
+	if contentHeight >= cardHeight {
+		maxScroll = maxScroll / cardHeight * cardHeight
 	}
 	if a.scroll > maxScroll {
 		a.scroll = maxScroll
@@ -127,20 +129,22 @@ func (a *App) detailWindowLine(width int) string {
 	return fitLine(strings.Join(parts, " "), width)
 }
 
-func (a *App) detailContentLines(node komari.Node, st komari.Status, width int) []string {
+func (a *App) detailContentLines(node komari.Node, st komari.Status, width int, cardHeight int) []string {
 	sections := a.detailSections(node, st)
 	if len(sections) == 0 {
 		return []string{fitLine("", width)}
 	}
 	if width >= 96 {
-		return a.detailSectionGrid(sections, width, 2)
+		return a.detailSectionGrid(sections, width, 2, cardHeight)
 	}
-	return a.detailSectionGrid(sections, width, 1)
+	return a.detailSectionGrid(sections, width, 1, cardHeight)
 }
 
-func (a *App) detailSectionGrid(sections []detailSection, width int, columns int) []string {
+func (a *App) detailSectionGrid(sections []detailSection, width int, columns int, cardHeight int) []string {
 	gap := 2
-	cardHeight := detailCardHeight
+	if cardHeight < detailCardHeight {
+		cardHeight = detailCardHeight
+	}
 	if columns < 1 {
 		columns = 1
 	}
@@ -179,6 +183,19 @@ func (a *App) detailSectionGrid(sections []detailSection, width int, columns int
 		}
 	}
 	return lines
+}
+
+func detailCardHeightFor(contentHeight int) int {
+	switch {
+	case contentHeight >= 45:
+		return 15
+	case contentHeight >= 28:
+		return 10
+	case contentHeight >= 21:
+		return 9
+	default:
+		return detailCardHeight
+	}
 }
 
 func (a *App) detailSectionCard(section detailSection, width int, height int) []string {

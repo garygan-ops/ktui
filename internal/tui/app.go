@@ -14,22 +14,33 @@ type App struct {
 	fetchTimeout    time.Duration
 	detailTimeout   time.Duration
 	detailCacheTTL  time.Duration
+	realtimePoints  int
+	saveSettings    func(PersistentSettings) error
 	style           Style
 	mode            Mode
 
-	selected int
-	scroll   int
-	tab      int
-	window   int
-	detail   bool
+	selected          int
+	scroll            int
+	tab               int
+	window            int
+	detail            bool
+	settings          bool
+	cardStep          int
+	settingsWasDetail bool
+	settingsSelected  int
+	settingsStatus    string
+	settingsURL       string
+	settingsAPIKey    string
+	chartYAxisMode    chartYAxisMode
 
 	snapshot komari.Snapshot
 	err      error
 	loading  bool
 	fetching bool
 	// At most one refresh is queued while an in-flight request is finishing.
-	refreshPending bool
-	quit           bool
+	refreshPending  bool
+	intervalChanged bool
+	quit            bool
 
 	marqueeFrame  int
 	lastFullFetch time.Time
@@ -46,13 +57,28 @@ type App struct {
 }
 
 type Options struct {
+	URL             string
+	APIKey          string
 	RefreshInterval time.Duration
 	FetchTimeout    time.Duration
 	DetailTimeout   time.Duration
 	DetailCacheTTL  time.Duration
+	RealtimePoints  int
+	ChartYAxisMode  string
+	SaveSettings    func(PersistentSettings) error
 	ASCII           bool
 	NoColor         bool
 	Mode            Mode
+}
+
+type PersistentSettings struct {
+	Interval       string
+	Timeout        string
+	Mode           string
+	RealtimePoints int
+	ChartYAxisMode string
+	ASCII          bool
+	NoColor        bool
 }
 
 type Mode string
@@ -60,6 +86,13 @@ type Mode string
 const (
 	ModeSheet Mode = "sheet"
 	ModeLine  Mode = "line"
+)
+
+type chartYAxisMode string
+
+const (
+	chartYAxisAbsolute chartYAxisMode = "absolute"
+	chartYAxisRelative chartYAxisMode = "relative"
 )
 
 type nodeDetail struct {
@@ -107,13 +140,22 @@ type detailSection struct {
 }
 
 type axisChart struct {
+	Values     []float64
+	Series     []axisSeries
+	Times      []time.Time
+	From       string
+	To         string
+	Unit       string
+	Window     time.Duration
+	Until      time.Time
+	FixedRange bool
+	Min        float64
+	Max        float64
+}
+
+type axisSeries struct {
+	Name   string
 	Values []float64
-	Times  []time.Time
-	From   string
-	To     string
-	Unit   string
-	Window time.Duration
-	Until  time.Time
 }
 
 const detailCardHeight = 7
@@ -153,6 +195,10 @@ func NewWithOptions(client *komari.Client, opts Options) *App {
 	if opts.DetailCacheTTL <= 0 {
 		opts.DetailCacheTTL = defaultDetailCacheTTL
 	}
+	chartYAxisMode := chartYAxisAbsolute
+	if opts.ChartYAxisMode == string(chartYAxisRelative) {
+		chartYAxisMode = chartYAxisRelative
+	}
 	if opts.Mode == "" {
 		opts.Mode = ModeSheet
 	}
@@ -162,6 +208,9 @@ func NewWithOptions(client *komari.Client, opts Options) *App {
 		fetchTimeout:    opts.FetchTimeout,
 		detailTimeout:   opts.DetailTimeout,
 		detailCacheTTL:  opts.DetailCacheTTL,
+		realtimePoints:  opts.RealtimePoints,
+		settingsURL:     opts.URL,
+		settingsAPIKey:  opts.APIKey,
 		style:           Style{ASCII: opts.ASCII, NoColor: opts.NoColor},
 		mode:            opts.Mode,
 		renderCh:        make(chan struct{}, 1),
@@ -172,6 +221,8 @@ func NewWithOptions(client *komari.Client, opts Options) *App {
 		loading:         true,
 		nodeDetail:      map[detailKey]nodeDetail{},
 		realtimeStatus:  map[string][]komari.Status{},
+		chartYAxisMode:  chartYAxisMode,
+		saveSettings:    opts.SaveSettings,
 	}
 }
 
@@ -196,6 +247,7 @@ func (a *App) Run(ctx context.Context) error {
 
 	a.render()
 	for !a.quit {
+		a.resetRefreshTickerIfNeeded(ticker)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -245,6 +297,18 @@ func (a *App) Run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+type refreshTicker interface {
+	Reset(time.Duration)
+}
+
+func (a *App) resetRefreshTickerIfNeeded(ticker refreshTicker) {
+	if !a.intervalChanged {
+		return
+	}
+	ticker.Reset(a.refreshInterval)
+	a.intervalChanged = false
 }
 
 func (a *App) fetch(ctx context.Context) {

@@ -28,7 +28,7 @@ https://www.nodeseek.com/post-710243-1
 
 ## 构建
 
-需要 Go 1.22 或更新版本。
+需要 Go 1.26 或更新版本。
 
 ```sh
 go build -o ktui ./cmd/ktui
@@ -133,6 +133,8 @@ KTUI_CONFIG=/path/to/config.json ./ktui
   "api_key": "",
   "interval": "5s",
   "timeout": "10s",
+  "realtime_points": 0,
+  "chart_y_axis": "absolute",
   "mode": "sheet",
   "ascii": false,
   "no_color": false
@@ -151,6 +153,8 @@ KTUI_CONFIG=/path/to/config.json ./ktui
 KTUI_URL=https://komari.example.com ./ktui
 KTUI_API_KEY=your_api_key ./ktui
 KTUI_MODE=line ./ktui
+KTUI_REALTIME_POINTS=150 ./ktui
+KTUI_CHART_Y_AXIS=relative ./ktui
 KTUI_ASCII=1 NO_COLOR=1 ./ktui
 ```
 

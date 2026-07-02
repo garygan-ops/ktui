@@ -26,6 +26,9 @@ func TestNewWithOptionsTimeoutDefaults(t *testing.T) {
 	if app.detailCacheTTL != defaultDetailCacheTTL {
 		t.Fatalf("detailCacheTTL = %s, want %s", app.detailCacheTTL, defaultDetailCacheTTL)
 	}
+	if app.realtimePoints != 0 {
+		t.Fatalf("realtimePoints = %d, want auto", app.realtimePoints)
+	}
 }
 
 func TestNewWithOptionsUsesTimeoutOptions(t *testing.T) {
@@ -34,6 +37,7 @@ func TestNewWithOptionsUsesTimeoutOptions(t *testing.T) {
 		FetchTimeout:    3 * time.Second,
 		DetailTimeout:   4 * time.Second,
 		DetailCacheTTL:  5 * time.Second,
+		RealtimePoints:  150,
 	})
 
 	if app.refreshInterval != 2*time.Second {
@@ -47,6 +51,9 @@ func TestNewWithOptionsUsesTimeoutOptions(t *testing.T) {
 	}
 	if app.detailCacheTTL != 5*time.Second {
 		t.Fatalf("detailCacheTTL = %s", app.detailCacheTTL)
+	}
+	if app.realtimePoints != 150 {
+		t.Fatalf("realtimePoints = %d", app.realtimePoints)
 	}
 }
 
@@ -182,6 +189,58 @@ func TestRealtimeSampleLimitUsesRefreshInterval(t *testing.T) {
 
 	if got, want := app.maxRealtimeSamples(), 30; got != want {
 		t.Fatalf("maxRealtimeSamples = %d, want %d", got, want)
+	}
+}
+
+func TestRealtimeSampleLimitCanUseConfiguredPoints(t *testing.T) {
+	app := NewWithOptions(nil, Options{
+		RefreshInterval: 20 * time.Second,
+		RealtimePoints:  5,
+	})
+	node := komari.Node{UUID: "node-1", Name: "node"}
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+
+	for i := 0; i < 6; i++ {
+		sampleTime := now.Add(time.Duration(i) * app.refreshInterval)
+		app.recordRealtimeSnapshot(komari.Snapshot{
+			Nodes: []komari.Node{node},
+			Status: map[string]komari.Status{node.UUID: {
+				CPU: float64(i + 1),
+			}},
+			FetchedAt: sampleTime,
+		}, sampleTime)
+	}
+
+	records := app.realtimeRecords(node.UUID, nil, komari.Status{})
+	if len(records) != 5 {
+		t.Fatalf("records len = %d, want 5", len(records))
+	}
+	if got := statusValues(records, func(st komari.Status) float64 { return st.CPU }); !sameFloatSlice(got, []float64{2, 3, 4, 5, 6}) {
+		t.Fatalf("values = %#v, want [2 3 4 5 6]", got)
+	}
+}
+
+type fakeRefreshTicker struct {
+	reset time.Duration
+}
+
+func (f *fakeRefreshTicker) Reset(interval time.Duration) {
+	f.reset = interval
+}
+
+func TestResetRefreshTickerWhenIntervalChanges(t *testing.T) {
+	app := NewWithOptions(nil, Options{RefreshInterval: 2 * time.Second})
+	app.refreshInterval = 5 * time.Second
+	app.intervalChanged = true
+	ticker := &fakeRefreshTicker{}
+
+	app.resetRefreshTickerIfNeeded(ticker)
+
+	if ticker.reset != 5*time.Second {
+		t.Fatalf("ticker reset = %s, want 5s", ticker.reset)
+	}
+	if app.intervalChanged {
+		t.Fatal("intervalChanged should be cleared after ticker reset")
 	}
 }
 

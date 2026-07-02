@@ -43,8 +43,11 @@ func TestRealtimeHistorySectionsIncludeCharts(t *testing.T) {
 	if !hasSection(sections, "Disk Chart") {
 		t.Fatalf("missing Disk Chart section: %#v", sectionTitles(sections))
 	}
-	if !hasSection(sections, "Network Chart") {
-		t.Fatalf("missing Network Chart section: %#v", sectionTitles(sections))
+	if !hasSection(sections, "Network In Chart") {
+		t.Fatalf("missing Network In Chart section: %#v", sectionTitles(sections))
+	}
+	if !hasSection(sections, "Network Out Chart") {
+		t.Fatalf("missing Network Out Chart section: %#v", sectionTitles(sections))
 	}
 	if !hasSection(sections, "Connections Chart") {
 		t.Fatalf("missing Connections Chart section: %#v", sectionTitles(sections))
@@ -73,7 +76,7 @@ func TestHistorySectionsIncludeAllMetricCharts(t *testing.T) {
 	if len(sections) == 0 || sections[0].Title != "CPU Chart" {
 		t.Fatalf("first history section = %#v, want CPU Chart first", sectionTitles(sections))
 	}
-	for _, title := range []string{"CPU Chart", "RAM Chart", "Disk Chart", "Network Chart", "Connections Chart", "Process Chart"} {
+	for _, title := range []string{"CPU Chart", "RAM Chart", "Disk Chart", "Network In Chart", "Network Out Chart", "Connections Chart", "Process Chart"} {
 		if !hasSection(sections, title) {
 			t.Fatalf("missing %s section: %#v", title, sectionTitles(sections))
 		}
@@ -85,12 +88,12 @@ func TestHistoryMetricSectionsMatchWebLoadChartSet(t *testing.T) {
 	node := komari.Node{UUID: "node-1", Name: "node", MemTotal: 1000, DiskTotal: 2000}
 	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
 	records := []komari.Status{
-		{CPU: 10, RAM: 100, RAMTotal: 1000, Disk: 300, DiskTotal: 2000, NetOut: 100, NetIn: 50, Connections: 5, Process: 40, Time: komari.NullTime{Time: now, Valid: true}},
+		{CPU: 10, RAM: 100, RAMTotal: 1000, Swap: 200, SwapTotal: 1000, Disk: 300, DiskTotal: 2000, NetOut: 100, NetIn: 50, Connections: 5, Process: 40, Time: komari.NullTime{Time: now, Valid: true}},
 	}
 
 	sections := app.historyMetricSections(node, records[0], records, "Realtime")
 	titles := sectionTitles(sections)
-	wantPrefix := []string{"CPU Chart", "RAM Chart", "Disk Chart", "Network Chart", "Connections Chart", "Process Chart"}
+	wantPrefix := []string{"CPU Chart", "RAM Chart", "Disk Chart", "Network In Chart", "Network Out Chart", "Connections Chart", "Process Chart"}
 	for i, want := range wantPrefix {
 		if i >= len(titles) {
 			t.Fatalf("missing section %d want %q; all=%#v", i, want, titles)
@@ -98,6 +101,43 @@ func TestHistoryMetricSectionsMatchWebLoadChartSet(t *testing.T) {
 		if titles[i] != want {
 			t.Fatalf("section %d = %q, want %q; all=%#v", i, titles[i], want, titles)
 		}
+	}
+
+	for _, title := range []string{"CPU Chart", "RAM Chart", "Disk Chart"} {
+		section := sectionByTitle(sections, title)
+		if section == nil || section.Chart == nil {
+			t.Fatalf("%s missing chart: %#v", title, section)
+		}
+		if !section.Chart.FixedRange || section.Chart.Min != 0 || section.Chart.Max != 100 {
+			t.Fatalf("%s range = fixed:%t %.1f..%.1f, want fixed 0..100", title, section.Chart.FixedRange, section.Chart.Min, section.Chart.Max)
+		}
+	}
+
+	ram := sectionByTitle(sections, "RAM Chart")
+	if ram == nil || ram.Chart == nil || len(ram.Chart.Series) != 2 {
+		t.Fatalf("RAM chart series = %#v, want RAM and Swap", ram)
+	}
+	if ram.Chart.Series[0].Name != "RAM" || ram.Chart.Series[1].Name != "Swap" {
+		t.Fatalf("RAM chart series names = %#v, want RAM and Swap", ram.Chart.Series)
+	}
+	if got := ram.Chart.Series[1].Values; !sameFloatSlice(got, []float64{20}) {
+		t.Fatalf("Swap values = %#v, want [20]", got)
+	}
+
+	networkIn := sectionByTitle(sections, "Network In Chart")
+	if networkIn == nil || networkIn.Chart == nil {
+		t.Fatalf("Network In chart = %#v, want chart", networkIn)
+	}
+	if got := networkIn.Chart.Values; !sameFloatSlice(got, []float64{50}) {
+		t.Fatalf("Network In values = %#v, want [50]", got)
+	}
+
+	networkOut := sectionByTitle(sections, "Network Out Chart")
+	if networkOut == nil || networkOut.Chart == nil {
+		t.Fatalf("Network Out chart = %#v, want chart", networkOut)
+	}
+	if got := networkOut.Chart.Values; !sameFloatSlice(got, []float64{100}) {
+		t.Fatalf("Network Out values = %#v, want [100]", got)
 	}
 }
 
@@ -160,6 +200,26 @@ func TestAxisChartLinesIncludeYAxisAndTimeAxis(t *testing.T) {
 	}
 	if !strings.Contains(joined, "06-30 10:00") || !strings.Contains(joined, "06-30 11:00") {
 		t.Fatalf("missing time axis labels: %#v", lines)
+	}
+}
+
+func TestAxisChartLinesShowMoreFixedPercentTicksWhenTall(t *testing.T) {
+	app := NewWithOptions(nil, Options{ASCII: true})
+	lines := app.axisChartLines(axisChart{
+		Values:     []float64{10, 20, 40, 80},
+		From:       "12:00",
+		To:         "12:06",
+		Unit:       "%",
+		FixedRange: true,
+		Min:        0,
+		Max:        100,
+	}, 42, 7)
+
+	joined := strings.Join(lines, "\n")
+	for _, label := range []string{"100%", "80.0%", "60.0%", "40.0%", "20.0%", "0.00%"} {
+		if !strings.Contains(joined, label) {
+			t.Fatalf("missing percent tick %q: %#v", label, lines)
+		}
 	}
 }
 
@@ -327,8 +387,31 @@ func firstValidChartPoint(points []chartPoint) int {
 }
 
 func TestDetailScrollStepMatchesCardHeight(t *testing.T) {
-	if detailScrollStep() != detailCardHeight {
-		t.Fatalf("detailScrollStep = %d, want %d", detailScrollStep(), detailCardHeight)
+	app := NewWithOptions(nil, Options{})
+	if app.detailScrollStep() != detailCardHeight {
+		t.Fatalf("detailScrollStep = %d, want %d", app.detailScrollStep(), detailCardHeight)
+	}
+	app.cardStep = 10
+	if app.detailScrollStep() != 10 {
+		t.Fatalf("detailScrollStep = %d, want 10", app.detailScrollStep())
+	}
+}
+
+func TestDetailCardHeightAdaptsToContentHeight(t *testing.T) {
+	tests := []struct {
+		contentHeight int
+		want          int
+	}{
+		{contentHeight: 14, want: 7},
+		{contentHeight: 21, want: 9},
+		{contentHeight: 28, want: 10},
+		{contentHeight: 45, want: 15},
+	}
+
+	for _, tt := range tests {
+		if got := detailCardHeightFor(tt.contentHeight); got != tt.want {
+			t.Fatalf("detailCardHeightFor(%d) = %d, want %d", tt.contentHeight, got, tt.want)
+		}
 	}
 }
 
@@ -373,6 +456,15 @@ func hasSection(sections []detailSection, title string) bool {
 		}
 	}
 	return false
+}
+
+func sectionByTitle(sections []detailSection, title string) *detailSection {
+	for i := range sections {
+		if sections[i].Title == title {
+			return &sections[i]
+		}
+	}
+	return nil
 }
 
 func sectionTitles(sections []detailSection) []string {

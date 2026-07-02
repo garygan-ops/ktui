@@ -95,6 +95,14 @@ func statusRAMPercentValues(records []komari.Status, fallbackTotal int64) []floa
 	return values
 }
 
+func statusSwapPercentValues(records []komari.Status, fallbackTotal int64) []float64 {
+	values := make([]float64, 0, len(records))
+	for _, record := range records {
+		values = append(values, percent(record.Swap, firstNonZero(record.SwapTotal, fallbackTotal)))
+	}
+	return values
+}
+
 func statusDiskPercentValues(records []komari.Status, fallbackTotal int64) []float64 {
 	values := make([]float64, 0, len(records))
 	for _, record := range records {
@@ -202,35 +210,28 @@ func chartRealtimeTimeLabelFromTime(t time.Time) string {
 	return t.Local().Format("15:04:05")
 }
 
-func minMaxFloat(values []float64) (float64, float64) {
-	if len(values) == 0 {
-		return 0, 0
+func chartPointRow(value, minVal, maxVal float64, rowCount int) int {
+	if rowCount <= 1 {
+		return 0
 	}
-	minVal, maxVal := values[0], values[0]
-	for _, value := range values[1:] {
-		if value < minVal {
-			minVal = value
-		}
-		if value > maxVal {
-			maxVal = value
-		}
-	}
-	return minVal, maxVal
-}
-
-func chartPointRow(value, minVal, maxVal float64) int {
 	if maxVal == minVal {
-		return 1
+		return rowCount / 2
 	}
 	ratio := (value - minVal) / (maxVal - minVal)
-	switch {
-	case ratio >= 2.0/3.0:
-		return 0
-	case ratio >= 1.0/3.0:
-		return 1
-	default:
-		return 2
+	if ratio < 0 {
+		ratio = 0
 	}
+	if ratio > 1 {
+		ratio = 1
+	}
+	row := int(math.Round((1 - ratio) * float64(rowCount-1)))
+	if row < 0 {
+		return 0
+	}
+	if row >= rowCount {
+		return rowCount - 1
+	}
+	return row
 }
 
 func downsampleValues(values []float64, width int) []float64 {
@@ -297,6 +298,12 @@ func chartPoints(chart axisChart, width int) []chartPoint {
 		}
 	}
 	return points
+}
+
+func chartPointsForValues(chart axisChart, values []float64, width int) []chartPoint {
+	chart.Values = values
+	chart.Series = nil
+	return chartPoints(chart, width)
 }
 
 func sequenceChartPoints(values []float64, width int) []chartPoint {

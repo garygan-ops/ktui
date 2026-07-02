@@ -55,6 +55,8 @@ func parseKeys(data []byte) []keyEvent {
 			out = append(out, keyEvent{name: "back"})
 		case 'm', 'M':
 			out = append(out, keyEvent{name: "mode"})
+		case 's', 'S':
+			out = append(out, keyEvent{name: "settings"})
 		case 'j':
 			out = append(out, keyEvent{name: "down"})
 		case 'k':
@@ -117,6 +119,10 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 	previous := a.selected
 	previousTab := a.tab
 	previousWindow := a.window
+	if a.settings {
+		a.handleSettingsKey(key)
+		return
+	}
 	switch key.name {
 	case "force-quit":
 		a.quit = true
@@ -132,6 +138,11 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 			a.detail = false
 			a.scroll = 0
 		}
+	case "settings":
+		a.settingsWasDetail = a.detail
+		a.settings = true
+		a.detail = false
+		a.scroll = 0
 	case "open":
 		if len(a.snapshot.Nodes) > 0 {
 			a.detail = true
@@ -161,25 +172,25 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 		}
 	case "up":
 		if a.detail {
-			a.scroll -= detailScrollStep()
+			a.scroll -= a.detailScrollStep()
 		} else {
 			a.selected--
 		}
 	case "down":
 		if a.detail {
-			a.scroll += detailScrollStep()
+			a.scroll += a.detailScrollStep()
 		} else {
 			a.selected++
 		}
 	case "pageup":
 		if a.detail {
-			a.scroll -= detailScrollStep() * 3
+			a.scroll -= a.detailScrollStep() * 3
 		} else {
 			a.selected -= 10
 		}
 	case "pagedown":
 		if a.detail {
-			a.scroll += detailScrollStep() * 3
+			a.scroll += a.detailScrollStep() * 3
 		} else {
 			a.selected += 10
 		}
@@ -230,11 +241,40 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 	}
 }
 
+func (a *App) handleSettingsKey(key keyEvent) {
+	switch key.name {
+	case "force-quit":
+		a.quit = true
+	case "quit", "back", "settings":
+		a.settings = false
+		a.detail = a.settingsWasDetail
+		a.settingsWasDetail = false
+		a.scroll = 0
+	case "up":
+		a.moveSettingsSelection(-1)
+	case "down":
+		a.moveSettingsSelection(1)
+	case "top":
+		a.settingsSelected = 0
+	case "bottom":
+		a.settingsSelected = max(0, a.settingsCount()-1)
+	case "tab-left", "window-left":
+		a.adjustSelectedSetting(-1)
+	case "tab-right", "window-right", "open":
+		a.adjustSelectedSetting(1)
+	case "ascii":
+		a.style.ASCII = !a.style.ASCII
+	}
+}
+
 func (a *App) tabNeedsDetail() bool {
 	return a.tab == 2 || a.tab == 3
 }
 
-func detailScrollStep() int {
+func (a *App) detailScrollStep() int {
+	if a.cardStep > 0 {
+		return a.cardStep
+	}
 	return detailCardHeight
 }
 

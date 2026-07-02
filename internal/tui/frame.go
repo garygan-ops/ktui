@@ -93,7 +93,14 @@ func (a *App) headerLines(width int) []string {
 		a.headerChip("komari", valueOr(a.snapshot.Version.Version, "-")),
 		a.headerChip("rpc", valueOr(a.snapshot.RPCVersion, "-")),
 	}
-	if a.detail {
+	if a.settings {
+		contextParts = []string{
+			a.headerChip("view", "settings"),
+			a.headerChip("mode", string(a.mode)+"/"+mode),
+			a.headerChip("komari", valueOr(a.snapshot.Version.Version, "-")),
+			a.headerChip("rpc", valueOr(a.snapshot.RPCVersion, "-")),
+		}
+	} else if a.detail {
 		nodeName := "-"
 		if len(a.snapshot.Nodes) > 0 {
 			nodeName = a.nodeLabel(a.snapshot.Nodes[a.selected])
@@ -141,9 +148,11 @@ func headerCompactUnit(value string) string {
 }
 
 func (a *App) footerLine(width int) string {
-	footer := " ↑↓/jk select   Enter detail   m mode   r refresh   a ascii   q quit "
-	if a.detail {
-		footer = " Esc/q back   1-5/h/l tabs   [ ] window   j/k scroll   r refresh   d reload "
+	footer := " ↑↓/jk select   Enter detail   s settings   m mode   r refresh   a ascii   q quit "
+	if a.settings {
+		footer = " Esc/q back   ↑↓/jk select   ←→/h/l adjust   Enter toggle "
+	} else if a.detail {
+		footer = " Esc/q back   1-5/h/l tabs   [ ] window   j/k scroll   s settings   r refresh "
 	}
 	return a.style.inverse(cleanLine(footer, width))
 }

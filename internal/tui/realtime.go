@@ -105,6 +105,15 @@ func (a *App) realtimeNowOrTime(fallback time.Time) time.Time {
 }
 
 func (a *App) maxRealtimeSamples() int {
+	if a.realtimePoints > 0 {
+		if a.realtimePoints < 2 {
+			return 2
+		}
+		if a.realtimePoints > maxRealtimeSamplesCap {
+			return maxRealtimeSamplesCap
+		}
+		return a.realtimePoints
+	}
 	interval := a.refreshInterval
 	if interval <= 0 {
 		interval = defaultRefreshInterval
