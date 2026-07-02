@@ -154,25 +154,148 @@ func headerCompactUnit(value string) string {
 }
 
 func (a *App) footerLine(width int) string {
-	return a.style.inverse(cleanLine(a.footerText(), width))
+	return a.style.inverse(cleanLine(a.footerTextForWidth(width), width))
 }
 
 func (a *App) footerText() string {
+	return a.footerTextForWidth(0)
+}
+
+func (a *App) footerTextForWidth(width int) string {
+	items := a.footerItems()
+	for variant := 0; variant < footerLabelVariants; variant++ {
+		text := footerTextForVariant(items, variant)
+		if width <= 0 || displayWidth(text) <= width {
+			return text
+		}
+	}
+	return footerTextForVariant(items, footerLabelVariants-1)
+}
+
+func (a *App) footerItems() []footerItem {
 	if a.settings {
-		return " Esc/q back   ↑↓/jk select   ←→/h/l adjust   Enter toggle "
+		return []footerItem{
+			{Action: footerBack, Labels: [footerLabelVariants]string{"Esc/q back", "Back", "B"}},
+			{Action: footerSelect, Labels: [footerLabelVariants]string{"↑↓/jk select", "Select", "Sel"}},
+			{Action: footerAdjust, Labels: [footerLabelVariants]string{"←→/h/l adjust", "Adjust", "Adj"}},
+			{Action: footerToggle, Labels: [footerLabelVariants]string{"Enter toggle", "Toggle", "Tog"}},
+		}
 	}
 	if a.detail {
-		footer := " Back(Esc/q)   1-5/h/l tabs   [ ] window   j/k scroll   s settings   r refresh "
-		if a.update.Available {
-			footer += "  u update "
+		items := []footerItem{
+			{Action: footerBack, Labels: [footerLabelVariants]string{"Back(Esc/q)", "Back", "B"}},
+			{Action: footerTabs, Labels: [footerLabelVariants]string{"1-5/h/l tabs", "Tabs", "T"}},
+			{Action: footerWindow, Labels: [footerLabelVariants]string{"[ ] window", "Window", "W"}},
+			{Action: footerScroll, Labels: [footerLabelVariants]string{"j/k scroll", "Scroll", "J"}},
+			{Action: footerSettings, Labels: [footerLabelVariants]string{"s settings", "Settings", "S"}},
+			{Action: footerRefresh, Labels: [footerLabelVariants]string{"r refresh", "Refresh", "R"}},
 		}
-		return footer
+		if a.update.Available {
+			items = append(items, footerItem{Action: footerUpdate, Labels: [footerLabelVariants]string{"u update", "Update", "U"}})
+		}
+		return items
 	}
-	footer := " ↑↓/jk select   Enter detail   s settings   m mode   r refresh   a ascii   q quit "
+	items := []footerItem{
+		{Action: footerSelect, Labels: [footerLabelVariants]string{"↑↓/jk select", "Select", "J"}},
+		{Action: footerOpen, Labels: [footerLabelVariants]string{"Enter detail", "Detail", "O"}},
+		{Action: footerSettings, Labels: [footerLabelVariants]string{"s settings", "Settings", "S"}},
+		{Action: footerMode, Labels: [footerLabelVariants]string{"m mode", "Mode", "M"}},
+		{Action: footerRefresh, Labels: [footerLabelVariants]string{"r refresh", "Refresh", "R"}},
+		{Action: footerASCII, Labels: [footerLabelVariants]string{"a ascii", "ASCII", "A"}},
+		{Action: footerQuit, Labels: [footerLabelVariants]string{"q quit", "Quit", "Q"}},
+	}
 	if a.update.Available {
-		footer += "  u update "
+		items = append(items, footerItem{Action: footerUpdate, Labels: [footerLabelVariants]string{"u update", "Update", "U"}})
 	}
-	return footer
+	return items
+}
+
+type footerAction string
+
+const (
+	footerNone     footerAction = ""
+	footerSelect   footerAction = "select"
+	footerOpen     footerAction = "open"
+	footerSettings footerAction = "settings"
+	footerMode     footerAction = "mode"
+	footerRefresh  footerAction = "refresh"
+	footerASCII    footerAction = "ascii"
+	footerQuit     footerAction = "quit"
+	footerBack     footerAction = "back"
+	footerAdjust   footerAction = "adjust"
+	footerToggle   footerAction = "toggle"
+	footerTabs     footerAction = "tabs"
+	footerWindow   footerAction = "window"
+	footerScroll   footerAction = "scroll"
+	footerUpdate   footerAction = "update"
+)
+
+const footerLabelVariants = 3
+
+type footerItem struct {
+	Action footerAction
+	Labels [footerLabelVariants]string
+}
+
+func footerTextForVariant(items []footerItem, variant int) string {
+	if len(items) == 0 {
+		return " "
+	}
+	if variant < 0 {
+		variant = 0
+	}
+	if variant >= footerLabelVariants {
+		variant = footerLabelVariants - 1
+	}
+	sep := "   "
+	if variant == 1 {
+		sep = "  "
+	} else if variant == 2 {
+		sep = " "
+	}
+	labels := make([]string, 0, len(items))
+	for _, item := range items {
+		labels = append(labels, item.Labels[variant])
+	}
+	return " " + strings.Join(labels, sep) + " "
+}
+
+func (a *App) footerActionAt(x int, width int) footerAction {
+	if x <= 0 {
+		return footerNone
+	}
+	items := a.footerItems()
+	variant := a.footerVariantForWidth(width)
+	pos := 2
+	for _, item := range items {
+		label := item.Labels[variant]
+		end := pos + displayWidth(label) - 1
+		if x >= pos && x <= end {
+			return item.Action
+		}
+		pos = end + 1
+		if variant == 0 {
+			pos += 3
+		} else if variant == 1 {
+			pos += 2
+		} else {
+			pos++
+		}
+	}
+	return footerNone
+}
+
+func (a *App) footerVariantForWidth(width int) int {
+	if width <= 0 {
+		return 0
+	}
+	items := a.footerItems()
+	for variant := 0; variant < footerLabelVariants; variant++ {
+		if displayWidth(footerTextForVariant(items, variant)) <= width {
+			return variant
+		}
+	}
+	return footerLabelVariants - 1
 }
 
 func (a *App) adjustScroll(visibleRows int) {

@@ -85,15 +85,20 @@ func (a *App) handleMouseClick(ctx context.Context, x int, y int) {
 }
 
 func (a *App) clickFooter(ctx context.Context, x int, y int) bool {
-	_, height := terminalSize()
+	width, height := terminalSize()
 	if y != height {
 		return false
 	}
+	drawWidth := width
+	if drawWidth > 1 {
+		drawWidth--
+	}
+	action := a.footerActionAt(x, drawWidth)
 	if a.settings {
-		switch {
-		case footerHit(a.footerText(), "Esc/q back", x):
+		switch action {
+		case footerBack:
 			a.closeSettings()
-		case footerHit(a.footerText(), "←→/h/l adjust", x), footerHit(a.footerText(), "Enter toggle", x):
+		case footerAdjust, footerToggle:
 			a.adjustSelectedSetting(1)
 		default:
 			return false
@@ -101,42 +106,42 @@ func (a *App) clickFooter(ctx context.Context, x int, y int) bool {
 		return true
 	}
 	if a.detail {
-		switch {
-		case footerHit(a.footerText(), "Back", x):
+		switch action {
+		case footerBack:
 			a.detail = false
 			a.scroll = 0
-		case footerHit(a.footerText(), "s settings", x):
+		case footerSettings:
 			a.openSettings()
-		case footerHit(a.footerText(), "r refresh", x):
+		case footerRefresh:
 			a.requestFullRefresh()
 			if len(a.snapshot.Nodes) > 0 {
 				a.fetchDetail(ctx, a.snapshot.Nodes[a.selected].UUID, true)
 			}
-		case footerHit(a.footerText(), "u update", x):
+		case footerUpdate:
 			a.showUpdateHint()
 		default:
 			return false
 		}
 		return true
 	}
-	switch {
-	case footerHit(a.footerText(), "Enter detail", x):
+	switch action {
+	case footerOpen:
 		a.openSelectedDetail(ctx)
-	case footerHit(a.footerText(), "s settings", x):
+	case footerSettings:
 		a.openSettings()
-	case footerHit(a.footerText(), "m mode", x):
+	case footerMode:
 		if a.mode == ModeLine {
 			a.mode = ModeSheet
 		} else {
 			a.mode = ModeLine
 		}
-	case footerHit(a.footerText(), "r refresh", x):
+	case footerRefresh:
 		a.requestFullRefresh()
-	case footerHit(a.footerText(), "a ascii", x):
+	case footerASCII:
 		a.style.ASCII = !a.style.ASCII
-	case footerHit(a.footerText(), "q quit", x):
+	case footerQuit:
 		a.quit = true
-	case footerHit(a.footerText(), "u update", x):
+	case footerUpdate:
 		a.showUpdateHint()
 	default:
 		return false

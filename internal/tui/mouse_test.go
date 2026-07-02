@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"ktui/internal/komari"
@@ -122,6 +123,58 @@ func TestMouseClickListFooterActions(t *testing.T) {
 	clickFooterLabel("q quit")
 	if !app.quit {
 		t.Fatal("clicking quit footer action should set quit")
+	}
+}
+
+func TestFooterFoldsInsteadOfClippingActions(t *testing.T) {
+	app := NewWithOptions(nil, Options{})
+	app.update.Available = true
+	footer := app.footerTextForWidth(24)
+	if displayWidth(footer) > 24 {
+		t.Fatalf("footer width = %d, want <= 24: %q", displayWidth(footer), footer)
+	}
+	for _, label := range []string{"J", "O", "S", "M", "R", "A", "Q", "U"} {
+		if !strings.Contains(footer, label) {
+			t.Fatalf("folded footer %q missing %q", footer, label)
+		}
+	}
+
+	items := app.footerItems()
+	variant := app.footerVariantForWidth(24)
+	pos := 2
+	for _, item := range items {
+		label := item.Labels[variant]
+		if action := app.footerActionAt(pos, 24); action != item.Action {
+			t.Fatalf("click on %q resolved to %q, want %q in footer %q", label, action, item.Action, footer)
+		}
+		pos += displayWidth(label) + 1
+	}
+}
+
+func TestFooterFoldsDetailAndSettingsActions(t *testing.T) {
+	app := NewWithOptions(nil, Options{})
+	app.detail = true
+	app.update.Available = true
+	detailFooter := app.footerTextForWidth(20)
+	if displayWidth(detailFooter) > 20 {
+		t.Fatalf("detail footer width = %d, want <= 20: %q", displayWidth(detailFooter), detailFooter)
+	}
+	for _, label := range []string{"B", "T", "W", "J", "S", "R", "U"} {
+		if !strings.Contains(detailFooter, label) {
+			t.Fatalf("folded detail footer %q missing %q", detailFooter, label)
+		}
+	}
+
+	app.detail = false
+	app.settings = true
+	settingsFooter := app.footerTextForWidth(20)
+	if displayWidth(settingsFooter) > 20 {
+		t.Fatalf("settings footer width = %d, want <= 20: %q", displayWidth(settingsFooter), settingsFooter)
+	}
+	for _, label := range []string{"B", "Sel", "Adj", "Tog"} {
+		if !strings.Contains(settingsFooter, label) {
+			t.Fatalf("folded settings footer %q missing %q", settingsFooter, label)
+		}
 	}
 }
 

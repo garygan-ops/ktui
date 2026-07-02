@@ -272,9 +272,10 @@ func TestRealtimeChartPointsMoveLeftAsWindowClockAdvances(t *testing.T) {
 	}
 }
 
-func TestRealtimeMetricChartUsesRecordRange(t *testing.T) {
+func TestRealtimeMetricChartUsesFixedTimeWindow(t *testing.T) {
 	app := NewWithOptions(nil, Options{ASCII: true})
 	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	app.advanceRealtimeNow(now.Add(10 * time.Second))
 	records := []komari.Status{
 		{CPU: 10, Time: komari.NullTime{Time: now.Add(-30 * time.Second), Valid: true}},
 		{CPU: 20, Time: komari.NullTime{Time: now, Valid: true}},
@@ -284,14 +285,38 @@ func TestRealtimeMetricChartUsesRecordRange(t *testing.T) {
 	if section.Chart == nil {
 		t.Fatal("missing chart")
 	}
-	if section.Chart.Window != 0 || !section.Chart.Until.IsZero() {
-		t.Fatalf("realtime chart should use record order, got window=%s until=%s", section.Chart.Window, section.Chart.Until)
+	if section.Chart.Window != realtimeWindowDuration {
+		t.Fatalf("chart Window = %s, want %s", section.Chart.Window, realtimeWindowDuration)
 	}
-	if section.Chart.From != chartRealtimeTimeLabelFromTime(records[0].Time.Time) {
-		t.Fatalf("chart From = %q, want %q", section.Chart.From, chartRealtimeTimeLabelFromTime(records[0].Time.Time))
+	if !section.Chart.Until.Equal(now.Add(10 * time.Second)) {
+		t.Fatalf("chart Until = %s, want %s", section.Chart.Until, now.Add(10*time.Second))
 	}
-	if section.Chart.To != chartRealtimeTimeLabelFromTime(records[1].Time.Time) {
-		t.Fatalf("chart To = %q, want %q", section.Chart.To, chartRealtimeTimeLabelFromTime(records[1].Time.Time))
+	if section.Chart.From != chartRealtimeTimeLabelFromTime(now.Add(10*time.Second).Add(-realtimeWindowDuration)) {
+		t.Fatalf("chart From = %q", section.Chart.From)
+	}
+	if section.Chart.To != chartRealtimeTimeLabelFromTime(now.Add(10*time.Second)) {
+		t.Fatalf("chart To = %q", section.Chart.To)
+	}
+}
+
+func TestRealtimeChartPointsScaleWithPlotWidth(t *testing.T) {
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	chart := axisChart{
+		Values: []float64{10, 20},
+		Times:  []time.Time{now.Add(-30 * time.Second), now},
+		Window: time.Minute,
+		Until:  now,
+	}
+
+	narrow := chartPoints(chart, 31)
+	wide := chartPoints(chart, 61)
+	narrowFirst := firstValidChartPoint(narrow)
+	wideFirst := firstValidChartPoint(wide)
+	if narrowFirst != 15 {
+		t.Fatalf("narrow first point = %d, want 15", narrowFirst)
+	}
+	if wideFirst != 30 {
+		t.Fatalf("wide first point = %d, want 30", wideFirst)
 	}
 }
 
