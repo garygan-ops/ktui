@@ -137,7 +137,14 @@ func main() {
 		return
 	}
 
-	app := tui.NewWithOptions(client, tui.Options{RefreshInterval: interval, ASCII: ascii, NoColor: noColor, Mode: mode})
+	app := tui.NewWithOptions(client, tui.Options{
+		RefreshInterval: interval,
+		FetchTimeout:    timeout,
+		DetailTimeout:   timeout,
+		ASCII:           ascii,
+		NoColor:         noColor,
+		Mode:            mode,
+	})
 	if err := app.Run(context.Background()); err != nil && err != context.Canceled {
 		fatal(err)
 	}

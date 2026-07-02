@@ -1,0 +1,189 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"ktui/internal/komari"
+)
+
+func (a *App) renderLineBody(width int, bodyHeight int) []string {
+	if bodyHeight <= 0 {
+		return nil
+	}
+	if len(a.snapshot.Nodes) == 0 {
+		if a.loading {
+			return fillBody([]string{"Loading nodes..."}, width, bodyHeight)
+		}
+		return fillBody([]string{"No nodes returned by Komari."}, width, bodyHeight)
+	}
+
+	a.clampSelection()
+	header := a.lineTableHeader(width)
+	visibleRows := max(1, bodyHeight-len(header))
+	a.adjustScroll(visibleRows)
+
+	lines := make([]string, 0, bodyHeight)
+	lines = append(lines, header...)
+	end := min(len(a.snapshot.Nodes), a.scroll+visibleRows)
+	for i := a.scroll; i < end; i++ {
+		lines = append(lines, a.lineTableRow(i, a.snapshot.Nodes[i], width))
+	}
+	return fillBody(lines, width, bodyHeight)
+}
+
+func (a *App) lineTableHeader(width int) []string {
+	title := a.lineTableColumns(width, false, komari.Node{}, komari.Status{}, false)
+	return []string{
+		a.style.bold(fitLine("Servers "+a.style.dim(fmt.Sprintf("(%d nodes)", len(a.snapshot.Nodes))), width)),
+		a.style.dim(fitLine(title, width)),
+		a.style.dim(fitLine(a.style.separator(width), width)),
+	}
+}
+
+func (a *App) lineTableRow(index int, node komari.Node, width int) string {
+	st := a.snapshot.Status[node.UUID]
+	selected := index == a.selected
+	line := a.lineTableColumns(width, true, node, st, selected)
+	if index == a.selected {
+		return a.style.inverse(fitLine(line, width))
+	}
+	if !st.Online {
+		return a.style.dim(fitLine(line, width))
+	}
+	return fitLine(line, width)
+}
+
+func (a *App) lineTableColumns(width int, row bool, node komari.Node, st komari.Status, selected bool) string {
+	nameWidth := 28
+	regionWidth := 10
+	netWidth := 19
+	trafficWidth := 19
+	uptimeWidth := 10
+	loadWidth := 16
+	osWidth := 12
+	expWidth := 8
+	tagWidth := 16
+	showDisk := width >= 72
+	showRegion := width >= 86
+	showNet := width >= 104
+	showLoad := width >= 122
+	showUptime := width >= 136
+	showTraffic := width >= 156
+	showRuntime := width >= 174
+	showExp := width >= 186
+	showOS := width >= 202
+	showTags := width >= 220
+	if width < 64 {
+		nameWidth = max(12, width-34)
+	} else if width < 86 {
+		nameWidth = 24
+	}
+
+	if !row {
+		parts := []string{
+			fmt.Sprintf("   %-3s %-*s %7s %7s", "ST", nameWidth, "NODE", "CPU", "RAM"),
+		}
+		if showDisk {
+			parts = append(parts, fmt.Sprintf(" %7s", "DISK"))
+		}
+		if showRegion {
+			parts = append(parts, fmt.Sprintf(" %-*s", regionWidth, "REGION"))
+		}
+		if showNet {
+			parts = append(parts, fmt.Sprintf(" %-*s", netWidth, "NET"))
+		}
+		if showLoad {
+			parts = append(parts, fmt.Sprintf(" %-*s", loadWidth, "LOAD"))
+		}
+		if showUptime {
+			parts = append(parts, fmt.Sprintf(" %-*s", uptimeWidth, "UPTIME"))
+		}
+		if showTraffic {
+			parts = append(parts, fmt.Sprintf(" %-*s", trafficWidth, "TRAFFIC"))
+		}
+		if showRuntime {
+			parts = append(parts, fmt.Sprintf(" %5s %4s", "CONN", "PROC"))
+		}
+		if showExp {
+			parts = append(parts, fmt.Sprintf(" %-*s", expWidth, "EXP"))
+		}
+		if showOS {
+			parts = append(parts, fmt.Sprintf(" %-*s", osWidth, "OS"))
+		}
+		if showTags {
+			parts = append(parts, fmt.Sprintf(" %-*s", tagWidth, "TAG"))
+		}
+		return strings.Join(parts, "")
+	}
+
+	marker := " "
+	if selected {
+		marker = ">"
+	}
+	state := "on"
+	if !st.Online {
+		state = "off"
+	}
+	if !a.style.ASCII {
+		if st.Online {
+			state = "●"
+		} else {
+			state = "●"
+		}
+		if !selected {
+			if st.Online {
+				state = a.style.green(state)
+			} else {
+				state = a.style.red(state)
+			}
+		}
+	}
+	stateCell := padRight(state, 3)
+	parts := []string{
+		fmt.Sprintf(" %s %s %-*s %6.1f%% %6.1f%%",
+			marker,
+			stateCell,
+			nameWidth,
+			cleanLine(a.nodeLabel(node), nameWidth),
+			st.CPU,
+			percent(st.RAM, firstNonZero(st.RAMTotal, node.MemTotal)),
+		),
+	}
+	if showDisk {
+		parts = append(parts, fmt.Sprintf(" %6.1f%%", percent(st.Disk, firstNonZero(st.DiskTotal, node.DiskTotal))))
+	}
+	if showRegion {
+		parts = append(parts, fmt.Sprintf(" %-*s", regionWidth, cleanLine(valueOr(a.text(node.Region), "-"), regionWidth)))
+	}
+	if showNet {
+		net := fmt.Sprintf("%s %s %s %s", a.style.up(), speedIEC(st.NetOut), a.style.down(), speedIEC(st.NetIn))
+		parts = append(parts, fmt.Sprintf(" %-*s", netWidth, cleanLine(net, netWidth)))
+	}
+	if showLoad {
+		load := fmt.Sprintf("%.2f %.2f %.2f", st.Load, st.Load5, st.Load15)
+		parts = append(parts, fmt.Sprintf(" %-*s", loadWidth, cleanLine(load, loadWidth)))
+	}
+	if showUptime {
+		parts = append(parts, fmt.Sprintf(" %-*s", uptimeWidth, durationCompact(st.Uptime)))
+	}
+	if showTraffic {
+		traffic := fmt.Sprintf("%s %s %s %s", a.style.up(), bytesIEC(st.NetTotalUp), a.style.down(), bytesIEC(st.NetTotalDown))
+		parts = append(parts, fmt.Sprintf(" %-*s", trafficWidth, cleanLine(traffic, trafficWidth)))
+	}
+	if showRuntime {
+		parts = append(parts, fmt.Sprintf(" %5d %4d", st.Connections, st.Process))
+	}
+	if showExp {
+		parts = append(parts, fmt.Sprintf(" %-*s", expWidth, cleanLine(expiryText(node, time.Now()), expWidth)))
+	}
+	if showOS {
+		parts = append(parts, fmt.Sprintf(" %-*s", osWidth, cleanLine(valueOr(a.text(node.OS), "-"), osWidth)))
+	}
+	if showTags {
+		tag := strings.TrimSpace(valueOr(a.text(node.Group), "") + " " + valueOr(a.text(node.Tags), ""))
+		parts = append(parts, fmt.Sprintf(" %-*s", tagWidth, cleanLine(valueOr(tag, "-"), tagWidth)))
+	}
+	return strings.Join(parts, "")
+}
