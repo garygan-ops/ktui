@@ -349,6 +349,52 @@ func trafficPercent(up, down, limit int64, limitType string) float64 {
 	return float64(used) / float64(limit) * 100
 }
 
+func trafficLimitKind(limitType string) string {
+	switch strings.ToLower(strings.TrimSpace(limitType)) {
+	case "up":
+		return "Up"
+	case "down":
+		return "Down"
+	case "max":
+		return "Max"
+	case "min":
+		return "Min"
+	default:
+		return "Sum"
+	}
+}
+
+func trafficLimitText(limit int64, limitType string) string {
+	if limit <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%s(%s)", trafficLimitKind(limitType), trafficBytes(limit))
+}
+
+func trafficBytes(n int64) string {
+	negative := n < 0
+	if negative {
+		n = -n
+	}
+	units := []string{"B", "KB", "MB", "GB", "TB", "PB"}
+	value := float64(n)
+	unit := 0
+	for value >= 1024 && unit < len(units)-1 {
+		value /= 1024
+		unit++
+	}
+	var out string
+	if unit == 0 {
+		out = fmt.Sprintf("%d %s", n, units[unit])
+	} else {
+		out = fmt.Sprintf("%.2f %s", value, units[unit])
+	}
+	if negative {
+		return "-" + out
+	}
+	return out
+}
+
 func displayWidth(s string) int {
 	s = ansiRE.ReplaceAllString(s, "")
 	width := 0

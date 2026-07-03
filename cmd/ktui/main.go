@@ -47,6 +47,12 @@ func main() {
 		}
 		return
 	}
+	if len(args) > 0 && args[0] == "export" {
+		if err := handleExport(args[1:]); err != nil {
+			fatal(err)
+		}
+		return
+	}
 	if len(args) > 0 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
 		if err := handleHelp(args[1:]); err != nil {
 			fatal(err)
@@ -57,13 +63,8 @@ func main() {
 		usageError(fmt.Errorf("unknown command %q", args[0]))
 	}
 
-	cfg, cfgPath, err := config.Load()
+	cfg, cfgPath, err := loadEffectiveConfig()
 	if err != nil {
-		fatal(err)
-	}
-	cfg = applyEnv(cfg)
-	cfg = cfg.WithDefaults()
-	if err := cfg.Validate(); err != nil {
 		fatal(err)
 	}
 
@@ -131,17 +132,9 @@ func main() {
 	if sheetMode {
 		mode = tui.ModeSheet
 	}
-	if strings.TrimSpace(baseURL) == "" {
-		if !isInteractiveTerminal(os.Stdin) {
-			fatal(fmt.Errorf("Komari URL is not set. Run `ktui config set url https://your-komari.example.com` or pass `--url https://your-komari.example.com`"))
-		}
-		cfg.APIKey = apiKey
-		next, err := firstRunSetup(cfg, os.Stdin, os.Stdout)
-		if err != nil {
-			fatal(err)
-		}
-		baseURL = next.URL
-		apiKey = next.APIKey
+	baseURL, apiKey, err = prepareConnectionConfig(cfg, baseURL, apiKey, os.Stdin, os.Stdout)
+	if err != nil {
+		fatal(err)
 	}
 
 	client, err := komari.NewClientWithOptions(baseURL, komari.Options{APIKey: apiKey, Timeout: timeout})
@@ -181,6 +174,19 @@ func main() {
 	if err := app.Run(context.Background()); err != nil && err != context.Canceled {
 		fatal(err)
 	}
+}
+
+func loadEffectiveConfig() (config.Config, string, error) {
+	cfg, path, err := config.Load()
+	if err != nil {
+		return cfg, path, err
+	}
+	cfg = applyEnv(cfg)
+	cfg = cfg.WithDefaults()
+	if err := cfg.Validate(); err != nil {
+		return cfg, path, err
+	}
+	return cfg, path, nil
 }
 
 func applyEnv(cfg config.Config) config.Config {
@@ -265,6 +271,21 @@ func saveTUISettings(settings tui.PersistentSettings) error {
 	cfg.WarnExpiryDays = settings.WarnExpiryDays
 	_, err = config.Save(cfg)
 	return err
+}
+
+func prepareConnectionConfig(cfg config.Config, baseURL string, apiKey string, input *os.File, output io.Writer) (string, string, error) {
+	if strings.TrimSpace(baseURL) != "" {
+		return baseURL, apiKey, nil
+	}
+	if !isInteractiveTerminal(input) {
+		return "", "", fmt.Errorf("Komari URL is not set. Run `ktui config set url https://your-komari.example.com` or pass `--url https://your-komari.example.com`")
+	}
+	cfg.APIKey = apiKey
+	next, err := firstRunSetup(cfg, input, output)
+	if err != nil {
+		return "", "", err
+	}
+	return next.URL, next.APIKey, nil
 }
 
 func firstRunSetup(cfg config.Config, input io.Reader, output io.Writer) (config.Config, error) {
@@ -427,7 +448,7 @@ func handleConfig(args []string) error {
 
 func handleHelp(args []string) error {
 	if len(args) > 1 {
-		return fmt.Errorf("usage: ktui help [config|keys|update]")
+		return fmt.Errorf("usage: ktui help [config|keys|update|export]")
 	}
 	if len(args) == 0 {
 		printHelp()
@@ -440,6 +461,8 @@ func handleHelp(args []string) error {
 		printKeysHelp()
 	case "update":
 		printUpdateHelp()
+	case "export":
+		printExportHelp()
 	default:
 		return fmt.Errorf("unknown help topic %q", args[0])
 	}
@@ -479,8 +502,9 @@ Usage:
   ktui [flags]
   ktui version
   ktui update [--check] [--tag v0.1.0]
+  ktui export <json|csv|markdown> [--output PATH]
   ktui config <path|init|show|set|help>
-  ktui help [config|keys|update]
+  ktui help [config|keys|update|export]
 
 Flags:
   --url URL          Komari base URL
@@ -504,6 +528,8 @@ Examples:
   ktui --line --ascii --no-color
   ktui version
   ktui update --check
+  ktui export markdown
+  ktui export csv --output nodes.csv
   ktui config init
   ktui config set api-key your_api_key
   ktui help keys

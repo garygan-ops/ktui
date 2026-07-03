@@ -7,6 +7,11 @@ import (
 	"ktui/internal/komari"
 )
 
+const (
+	trafficWarnPercent     = 90.0
+	trafficCriticalPercent = 100.0
+)
+
 type nodeAlert struct {
 	Critical bool
 	Warning  bool
@@ -39,6 +44,16 @@ func (a *App) alertForNode(node komari.Node, st komari.Status, now time.Time) no
 		} else if until <= time.Duration(a.warnExpiryDays)*24*time.Hour {
 			alert.Warning = true
 			alert.Reasons = append(alert.Reasons, "expires")
+		}
+	}
+	if node.TrafficLimit > 0 {
+		trafficPct := trafficPercent(st.NetTotalUp, st.NetTotalDown, node.TrafficLimit, node.TrafficLimitType)
+		if trafficPct >= trafficCriticalPercent {
+			alert.Critical = true
+			alert.Reasons = append(alert.Reasons, "traffic")
+		} else if trafficPct >= trafficWarnPercent {
+			alert.Warning = true
+			alert.Reasons = append(alert.Reasons, "traffic")
 		}
 	}
 	return alert

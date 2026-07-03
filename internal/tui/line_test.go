@@ -61,3 +61,51 @@ func TestLineTableWideColumns(t *testing.T) {
 		t.Fatalf("row width = %d, want <= %d: %q", displayWidth(row), width, row)
 	}
 }
+
+func TestLineTableShowsTrafficLimitWhenAvailable(t *testing.T) {
+	app := NewWithOptions(nil, Options{ASCII: true, NoColor: true})
+	width := 230
+	node := komari.Node{
+		UUID:         "node-1",
+		Name:         "server",
+		TrafficLimit: 500 * 1024 * 1024 * 1024,
+	}
+	st := komari.Status{
+		Online:       true,
+		NetTotalUp:   246_520_385_372,
+		NetTotalDown: 250_214_057_246,
+	}
+
+	row := app.lineTableColumns(width, true, node, st, false)
+	if !strings.Contains(row, "92.5% Sum(500.00 GB)") {
+		t.Fatalf("row missing traffic limit: %q", row)
+	}
+}
+
+func TestLineBodyShowsScrollIndicatorWhenMoreNodesExist(t *testing.T) {
+	app := NewWithOptions(nil, Options{ASCII: true, NoColor: true, Mode: ModeLine})
+	app.snapshot = komari.Snapshot{
+		Nodes: []komari.Node{
+			{UUID: "n1", Name: "one"},
+			{UUID: "n2", Name: "two"},
+			{UUID: "n3", Name: "three"},
+			{UUID: "n4", Name: "four"},
+			{UUID: "n5", Name: "five"},
+		},
+		Status: map[string]komari.Status{},
+	}
+
+	lines := app.renderLineBody(80, 5)
+	if !strings.HasSuffix(lines[4], "v") {
+		t.Fatalf("last visible line = %q, want down scroll indicator", lines[4])
+	}
+	if strings.Contains(lines[4], "…") {
+		t.Fatalf("last visible line = %q, should not show ellipsis next to scroll indicator", lines[4])
+	}
+
+	app.selected = 4
+	lines = app.renderLineBody(80, 5)
+	if !strings.HasSuffix(lines[3], "^") {
+		t.Fatalf("first visible row = %q, want up scroll indicator", lines[3])
+	}
+}

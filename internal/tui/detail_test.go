@@ -84,6 +84,49 @@ func TestHistorySectionsIncludeAllMetricCharts(t *testing.T) {
 	}
 }
 
+func TestOverviewSectionsIncludeTrafficLimit(t *testing.T) {
+	app := NewWithOptions(nil, Options{ASCII: true, NoColor: true})
+	node := komari.Node{
+		UUID:         "node-1",
+		Name:         "node",
+		TrafficLimit: 500 * 1024 * 1024 * 1024,
+	}
+	st := komari.Status{
+		Online:       true,
+		NetTotalUp:   246_520_385_372,
+		NetTotalDown: 250_214_057_246,
+	}
+
+	section := sectionByTitle(app.overviewSections(node, st), "Total Traffic")
+	if section == nil {
+		t.Fatal("missing Total Traffic section")
+	}
+	joined := strings.Join(section.Lines, "\n")
+	for _, want := range []string{"92.5%", "229.59 GB", "233.03 GB", "Sum(500.00 GB)"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("traffic section missing %q: %q", want, joined)
+		}
+	}
+}
+
+func TestDetailBodyShowsScrollIndicatorWhenMoreContentExists(t *testing.T) {
+	app := NewWithOptions(nil, Options{ASCII: true, NoColor: true})
+	node := komari.Node{UUID: "node-1", Name: "node", MemTotal: 1000, DiskTotal: 2000}
+	app.snapshot = komari.Snapshot{
+		Nodes:  []komari.Node{node},
+		Status: map[string]komari.Status{node.UUID: {Online: true, CPU: 10}},
+	}
+	app.detail = true
+
+	lines := app.renderDetailBody(80, 12)
+	if len(lines) < 11 {
+		t.Fatalf("lines len = %d, want at least 11", len(lines))
+	}
+	if !strings.HasSuffix(lines[10], "v") {
+		t.Fatalf("detail body line = %q, want down scroll indicator", lines[10])
+	}
+}
+
 func TestChartFocusOpensAndClosesWithKeys(t *testing.T) {
 	app := NewWithOptions(nil, Options{ASCII: true})
 	node := komari.Node{UUID: "node-1", Name: "node", MemTotal: 1000, DiskTotal: 2000}

@@ -7,7 +7,7 @@ import (
 
 const (
 	mouseHeaderRows      = 4
-	sheetCardHeight      = 9
+	sheetCardHeight      = 10
 	sheetCardGap         = 2
 	sheetMinWidth        = 40
 	lineHeaderRows       = 3

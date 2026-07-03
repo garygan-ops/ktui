@@ -34,7 +34,14 @@ func (a *App) renderLineBody(width int, bodyHeight int) []string {
 	for i := a.scroll; i < end; i++ {
 		lines = append(lines, a.lineTableRow(i, nodes[i], width))
 	}
-	return fillBody(lines, width, bodyHeight)
+	lines = fillBody(lines, width, bodyHeight)
+	return a.withScrollIndicator(lines, width, scrollIndicator{
+		Start:   len(header),
+		Height:  visibleRows,
+		Offset:  a.scroll,
+		Visible: visibleRows,
+		Total:   len(nodes),
+	})
 }
 
 func (a *App) lineTableHeader(width int) []string {
@@ -67,7 +74,7 @@ func (a *App) lineTableColumns(width int, row bool, node komari.Node, st komari.
 	nameWidth := 28
 	regionWidth := 10
 	netWidth := 19
-	trafficWidth := 19
+	trafficWidth := 24
 	uptimeWidth := 10
 	loadWidth := 16
 	osWidth := 12
@@ -78,11 +85,11 @@ func (a *App) lineTableColumns(width int, row bool, node komari.Node, st komari.
 	showNet := width >= 104
 	showLoad := width >= 122
 	showUptime := width >= 136
-	showTraffic := width >= 156
-	showRuntime := width >= 174
-	showExp := width >= 186
-	showOS := width >= 202
-	showTags := width >= 220
+	showTraffic := width >= 162
+	showRuntime := width >= 180
+	showExp := width >= 192
+	showOS := width >= 208
+	showTags := width >= 226
 	if width < 64 {
 		nameWidth = max(12, width-34)
 	} else if width < 86 {
@@ -185,6 +192,10 @@ func (a *App) lineTableColumns(width int, row bool, node komari.Node, st komari.
 	}
 	if showTraffic {
 		traffic := fmt.Sprintf("%s %s %s %s", a.style.up(), bytesIEC(st.NetTotalUp), a.style.down(), bytesIEC(st.NetTotalDown))
+		if node.TrafficLimit > 0 {
+			pct := trafficPercent(st.NetTotalUp, st.NetTotalDown, node.TrafficLimit, node.TrafficLimitType)
+			traffic = fmt.Sprintf("%.1f%% %s", pct, trafficLimitText(node.TrafficLimit, node.TrafficLimitType))
+		}
 		parts = append(parts, fmt.Sprintf(" %-*s", trafficWidth, cleanLine(traffic, trafficWidth)))
 	}
 	if showRuntime {

@@ -54,7 +54,7 @@ func (a *App) overviewLines(width int, maxLines int) []string {
 	)
 	if node.TrafficLimit > 0 {
 		pct := trafficPercent(st.NetTotalUp, st.NetTotalDown, node.TrafficLimit, node.TrafficLimitType)
-		lines = append(lines, fmt.Sprintf("Limit       %.1f%% of %s (%s)", pct, bytesIEC(node.TrafficLimit), node.TrafficLimitType))
+		lines = append(lines, fmt.Sprintf("Limit       %.1f%% of %s", pct, trafficLimitText(node.TrafficLimit, node.TrafficLimitType)))
 	}
 	return limitLines(lines, width, maxLines)
 }
@@ -100,7 +100,7 @@ func (a *App) detailLines(width int, maxLines int) []string {
 	}
 	if node.TrafficLimit > 0 {
 		pct := trafficPercent(st.NetTotalUp, st.NetTotalDown, node.TrafficLimit, node.TrafficLimitType)
-		lines = append(lines, fmt.Sprintf("Limit   %.1f%% of %s (%s)", pct, bytesIEC(node.TrafficLimit), node.TrafficLimitType))
+		lines = append(lines, fmt.Sprintf("Limit   %.1f%% of %s", pct, trafficLimitText(node.TrafficLimit, node.TrafficLimitType)))
 	}
 	if node.Price != 0 || node.ExpiredAt.Valid || node.Tags != "" || node.PublicRemark != "" || node.Remark != "" {
 		price := "-"

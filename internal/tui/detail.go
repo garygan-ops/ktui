@@ -57,7 +57,14 @@ func (a *App) renderDetailBody(width int, bodyHeight int) []string {
 	lines := make([]string, 0, bodyHeight)
 	lines = append(lines, chrome...)
 	lines = append(lines, content[a.scroll:end]...)
-	return fillBody(lines, width, bodyHeight)
+	lines = fillBody(lines, width, bodyHeight)
+	return a.withScrollIndicator(lines, width, scrollIndicator{
+		Start:   len(chrome),
+		Height:  contentHeight,
+		Offset:  a.scroll,
+		Visible: contentHeight,
+		Total:   len(content),
+	})
 }
 
 func (a *App) renderFocusedChartBody(node komari.Node, st komari.Status, width int, bodyHeight int) []string {
@@ -117,6 +124,10 @@ func (a *App) detailMetricStrip(node komari.Node, st komari.Status, width int) s
 	}
 	if width >= 104 {
 		parts = append(parts, fmt.Sprintf(" NET %s %s %s %s", a.style.up(), speedIEC(st.NetOut), a.style.down(), speedIEC(st.NetIn)))
+	}
+	if width >= 128 && node.TrafficLimit > 0 {
+		pct := trafficPercent(st.NetTotalUp, st.NetTotalDown, node.TrafficLimit, node.TrafficLimitType)
+		parts = append(parts, fmt.Sprintf(" TRF %5.1f%% %s", pct, a.usageBarFor("TRF", pct, barWidth)))
 	}
 	return fitLine(strings.Join(parts, "  "), width)
 }
@@ -391,11 +402,11 @@ func (a *App) overviewSections(node komari.Node, st komari.Status) []detailSecti
 	if node.TrafficLimit > 0 {
 		pct := trafficPercent(st.NetTotalUp, st.NetTotalDown, node.TrafficLimit, node.TrafficLimitType)
 		sections = append(sections, detailSection{
-			Title: "Traffic Limit",
+			Title: "Total Traffic",
 			Lines: []string{
 				a.detailUsageLine(" Used", pct, fmt.Sprintf("%.1f%%", pct)),
-				fmt.Sprintf(" Limit   %s", bytesIEC(node.TrafficLimit)),
-				fmt.Sprintf(" Type    %s", valueOr(node.TrafficLimitType, "-")),
+				fmt.Sprintf(" Flow    %s %s  %s %s", a.style.up(), trafficBytes(st.NetTotalUp), a.style.down(), trafficBytes(st.NetTotalDown)),
+				fmt.Sprintf(" Limit   %s", trafficLimitText(node.TrafficLimit, node.TrafficLimitType)),
 			},
 		})
 	}

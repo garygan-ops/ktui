@@ -66,7 +66,14 @@ func (a *App) renderSheetBody(width int, bodyHeight int) []string {
 			lines = append(lines, fitLine(line.String(), width))
 		}
 	}
-	return fillBody(lines, width, bodyHeight)
+	lines = fillBody(lines, width, bodyHeight)
+	return a.withScrollIndicator(lines, width, scrollIndicator{
+		Start:   0,
+		Height:  bodyHeight,
+		Offset:  a.scroll,
+		Visible: rowsVisible,
+		Total:   (len(nodes) + columns - 1) / columns,
+	})
 }
 
 func (a *App) nodeCard(index int, node komari.Node, width int, height int) []string {
@@ -116,9 +123,17 @@ func (a *App) overviewCard(index int, node komari.Node, st komari.Status, width 
 		a.metricLine("RAM", ramPct, usageCompact(st.RAM, firstNonZero(st.RAMTotal, node.MemTotal)), width),
 		a.metricLine("DSK", diskPct, usageCompact(st.Disk, firstNonZero(st.DiskTotal, node.DiskTotal)), width),
 		fmt.Sprintf(" NET  %s %s  %s %s", a.style.up(), speedIEC(st.NetOut), a.style.down(), speedIEC(st.NetIn)),
-		fmt.Sprintf(" FLOW %s %s  %s %s", a.style.up(), bytesIEC(st.NetTotalUp), a.style.down(), bytesIEC(st.NetTotalDown)),
-		fmt.Sprintf(" UP   %-10s EXP %s", durationCompact(st.Uptime), expiryText(node, time.Now())),
 	}
+	if node.TrafficLimit > 0 {
+		pct := trafficPercent(st.NetTotalUp, st.NetTotalDown, node.TrafficLimit, node.TrafficLimitType)
+		lines = append(lines,
+			fmt.Sprintf(" FLOW %5.1f%% %s %s %s %s", pct, a.style.up(), trafficBytes(st.NetTotalUp), a.style.down(), trafficBytes(st.NetTotalDown)),
+			fmt.Sprintf(" LIM  %s", trafficLimitText(node.TrafficLimit, node.TrafficLimitType)),
+		)
+	} else {
+		lines = append(lines, fmt.Sprintf(" FLOW %s %s  %s %s", a.style.up(), bytesIEC(st.NetTotalUp), a.style.down(), bytesIEC(st.NetTotalDown)))
+	}
+	lines = append(lines, fmt.Sprintf(" UP   %-10s EXP %s", durationCompact(st.Uptime), expiryText(node, time.Now())))
 	if len(alert.Reasons) > 0 {
 		lines = append([]string{title, fmt.Sprintf(" WARN %s", alertText(alert))}, lines[1:]...)
 	}
@@ -146,6 +161,8 @@ func (a *App) usageBarFor(label string, pct float64, width int) string {
 		threshold = a.warnRAM
 	case "DSK", "DISK":
 		threshold = a.warnDisk
+	case "TRF", "TRAFFIC", "USED":
+		threshold = trafficWarnPercent
 	}
 	return a.usageBarWithThreshold(pct, threshold, width)
 }
