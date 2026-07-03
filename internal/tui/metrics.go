@@ -505,6 +505,9 @@ func chartAxisTimeLayout(span time.Duration) string {
 	if span <= 2*time.Hour {
 		return "15:04:05"
 	}
+	if span > 24*time.Hour {
+		return "01-02"
+	}
 	return "15:04"
 }
 

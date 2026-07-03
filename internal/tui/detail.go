@@ -70,8 +70,7 @@ func (a *App) renderDetailBody(width int, bodyHeight int) []string {
 func (a *App) renderFocusedChartBody(node komari.Node, st komari.Status, width int, bodyHeight int) []string {
 	sections := a.chartSections(node, st)
 	if len(sections) == 0 {
-		a.chartFocus = false
-		return a.renderDetailBody(width, bodyHeight)
+		return a.renderFocusedChartPlaceholder(node, width, bodyHeight)
 	}
 	a.clampChartFocus(len(sections))
 	section := sections[a.chartFocusIndex]
@@ -85,6 +84,32 @@ func (a *App) renderFocusedChartBody(node komari.Node, st komari.Status, width i
 		chartHeight = 1
 	}
 	lines = append(lines, a.axisChartLinesDetailed(*section.Chart, width, chartHeight)...)
+	return fillBody(lines, width, bodyHeight)
+}
+
+func (a *App) renderFocusedChartPlaceholder(node komari.Node, width int, bodyHeight int) []string {
+	title := fmt.Sprintf(" Loading charts  %s  %s", a.nodeLabel(node), detailWindows[a.window].Label)
+	lines := []string{
+		a.style.bold(fitLine(title, width)),
+		a.style.dim(fitLine(" Esc/b/q back   [ ] window   r refresh", width)),
+	}
+	detail := a.currentDetail(node.UUID)
+	message := "Loading records..."
+	switch {
+	case detail.Err != nil:
+		message = "Error loading records: " + detail.Err.Error()
+	case !detail.Loading:
+		if detailWindows[a.window].Hours == 0 {
+			message = "Waiting for realtime samples..."
+		} else {
+			message = "No chart data yet. Press d to load details."
+		}
+	}
+	lines = append(lines,
+		"",
+		" "+message,
+		" Focus mode will stay open while data loads.",
+	)
 	return fillBody(lines, width, bodyHeight)
 }
 
@@ -333,7 +358,6 @@ func (a *App) moveChartFocus(delta int) {
 	st := a.snapshot.Status[node.UUID]
 	charts := a.chartSections(node, st)
 	if len(charts) == 0 {
-		a.closeChartFocus()
 		return
 	}
 	a.chartFocusIndex = (a.chartFocusIndex + delta + len(charts)) % len(charts)

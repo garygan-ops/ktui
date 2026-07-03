@@ -175,6 +175,39 @@ func TestChartFocusWindowKeysKeepFocus(t *testing.T) {
 	}
 }
 
+func TestChartFocusStaysOpenWhileWindowDataLoads(t *testing.T) {
+	app := NewWithOptions(nil, Options{ASCII: true, NoColor: true})
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	node := komari.Node{UUID: "node-1", Name: "node", MemTotal: 1000, DiskTotal: 2000}
+	app.snapshot = komari.Snapshot{
+		Nodes:  []komari.Node{node},
+		Status: map[string]komari.Status{node.UUID: {Online: true, CPU: 20, Time: komari.NullTime{Time: now, Valid: true}}},
+	}
+	app.detail = true
+	app.tab = 2
+	app.focusChart(0)
+	app.window = 3
+	app.nodeDetail[detailKey{UUID: node.UUID, Window: app.window}] = nodeDetail{
+		UUID:    node.UUID,
+		Window:  app.window,
+		Loading: true,
+	}
+
+	lines := app.renderDetailBody(90, 12)
+	if !app.chartFocus {
+		t.Fatal("chart focus should stay open while selected window is loading")
+	}
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "Loading charts") || !strings.Contains(joined, "Loading records") {
+		t.Fatalf("focused loading body = %#v", lines)
+	}
+
+	app.moveChartFocus(1)
+	if !app.chartFocus {
+		t.Fatal("moving focus with no current charts should not close focus mode")
+	}
+}
+
 func TestHistoryMetricSectionsMatchWebLoadChartSet(t *testing.T) {
 	app := NewWithOptions(nil, Options{ASCII: true})
 	node := komari.Node{UUID: "node-1", Name: "node", MemTotal: 1000, DiskTotal: 2000}
@@ -331,6 +364,35 @@ func TestAxisChartLinesDetailedShowsIntermediateTimeTicks(t *testing.T) {
 	midLabel := now.Add(-2 * time.Hour).Local().Format("15:04")
 	if !strings.Contains(axis, midLabel) {
 		t.Fatalf("missing intermediate time tick: %#v", lines)
+	}
+}
+
+func TestAxisChartLinesDetailedUsesDatesForLongWindows(t *testing.T) {
+	app := NewWithOptions(nil, Options{ASCII: true})
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	lines := app.axisChartLinesDetailed(axisChart{
+		Values: []float64{10, 20, 5, 30},
+		Times: []time.Time{
+			now.Add(-7 * 24 * time.Hour),
+			now.Add(-5 * 24 * time.Hour),
+			now.Add(-2 * 24 * time.Hour),
+			now,
+		},
+		From:   "07-03",
+		To:     "07-10",
+		Unit:   "%",
+		Window: 7 * 24 * time.Hour,
+		Until:  now,
+	}, 80, 5)
+
+	axis := lines[len(lines)-1]
+	for _, label := range []string{"07-03", "07-10"} {
+		if !strings.Contains(axis, label) {
+			t.Fatalf("missing date axis label %q: %#v", label, lines)
+		}
+	}
+	if strings.Contains(axis, "12:00") {
+		t.Fatalf("long-window axis should use dates, not clock time: %#v", lines)
 	}
 }
 
