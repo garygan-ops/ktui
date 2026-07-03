@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"ktui/internal/config"
 )
@@ -51,6 +54,45 @@ func TestLooksLikeCommand(t *testing.T) {
 	if looksLikeCommand("") {
 		t.Fatal("empty string should not look like a command")
 	}
+}
+
+func TestCheckSystemClockRejectsLargeSkew(t *testing.T) {
+	now := time.Date(2026, 7, 4, 12, 30, 0, 0, time.UTC)
+	err := checkSystemClock(context.Background(), fakeServerTimeSource{time: now.Add(-time.Minute)}, func() time.Time {
+		return now
+	})
+	if err == nil {
+		t.Fatal("expected clock skew error")
+	}
+	if !strings.Contains(err.Error(), "Please correct your system time") {
+		t.Fatalf("error = %q", err.Error())
+	}
+}
+
+func TestCheckSystemClockAllowsSmallSkew(t *testing.T) {
+	now := time.Date(2026, 7, 4, 12, 30, 0, 0, time.UTC)
+	err := checkSystemClock(context.Background(), fakeServerTimeSource{time: now.Add(-10 * time.Second)}, func() time.Time {
+		return now
+	})
+	if err != nil {
+		t.Fatalf("clock check error = %v", err)
+	}
+}
+
+func TestCheckSystemClockIgnoresUnavailableServerTime(t *testing.T) {
+	err := checkSystemClock(context.Background(), fakeServerTimeSource{err: errors.New("missing date")}, time.Now)
+	if err != nil {
+		t.Fatalf("clock check error = %v", err)
+	}
+}
+
+type fakeServerTimeSource struct {
+	time time.Time
+	err  error
+}
+
+func (f fakeServerTimeSource) ServerTime(context.Context) (time.Time, error) {
+	return f.time, f.err
 }
 
 func TestFirstRunSetupSavesURLAndAPIKey(t *testing.T) {

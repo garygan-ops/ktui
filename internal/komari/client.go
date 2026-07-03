@@ -68,6 +68,30 @@ func (c *Client) HasAPIKey() bool {
 	return c.apiKey != ""
 }
 
+func (c *Client) ServerTime(ctx context.Context) (time.Time, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, c.baseURL, nil)
+	if err != nil {
+		return time.Time{}, err
+	}
+	c.applyAuth(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("HEAD %s: %w", c.baseURL, err)
+	}
+	defer resp.Body.Close()
+
+	value := resp.Header.Get("Date")
+	if value == "" {
+		return time.Time{}, fmt.Errorf("server Date header missing")
+	}
+	parsed, err := http.ParseTime(value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse server Date header: %w", err)
+	}
+	return parsed, nil
+}
+
 func (c *Client) Snapshot(ctx context.Context) (Snapshot, error) {
 	public, publicErr := c.PublicInfo(ctx)
 	nodes, nodesErr := c.Nodes(ctx)

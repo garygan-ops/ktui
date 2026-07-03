@@ -24,6 +24,11 @@ var (
 	date    = "unknown"
 )
 
+const (
+	maxSystemClockSkew = 30 * time.Second
+	clockCheckTimeout  = 5 * time.Second
+)
+
 func main() {
 	args, configPath := splitConfigArg(os.Args[1:])
 	if configPath != "" {
@@ -153,6 +158,10 @@ func main() {
 		return
 	}
 
+	if err := checkSystemClockBeforeTUI(client, timeout); err != nil {
+		fatal(err)
+	}
+
 	app := tui.NewWithOptions(client, tui.Options{
 		URL:             baseURL,
 		APIKey:          apiKey,
@@ -174,6 +183,55 @@ func main() {
 	if err := app.Run(context.Background()); err != nil && err != context.Canceled {
 		fatal(err)
 	}
+}
+
+type serverTimeSource interface {
+	ServerTime(context.Context) (time.Time, error)
+}
+
+func checkSystemClockBeforeTUI(source serverTimeSource, timeout time.Duration) error {
+	if timeout <= 0 || timeout > clockCheckTimeout {
+		timeout = clockCheckTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return checkSystemClock(ctx, source, time.Now)
+}
+
+func checkSystemClock(ctx context.Context, source serverTimeSource, now func() time.Time) error {
+	serverTime, err := source.ServerTime(ctx)
+	if err != nil {
+		return nil
+	}
+	if now == nil {
+		now = time.Now
+	}
+	return validateSystemClock(now(), serverTime, maxSystemClockSkew)
+}
+
+func validateSystemClock(localTime, serverTime time.Time, maxSkew time.Duration) error {
+	skew := localTime.Sub(serverTime)
+	if absDuration(skew) <= maxSkew {
+		return nil
+	}
+	direction := "ahead of"
+	if skew < 0 {
+		direction = "behind"
+	}
+	return fmt.Errorf(
+		"system clock appears to be out of sync: local time is %s %s Komari server time (local %s, server %s). Please correct your system time and run ktui again",
+		absDuration(skew).Round(time.Second),
+		direction,
+		localTime.Format(time.RFC3339),
+		serverTime.Format(time.RFC3339),
+	)
+}
+
+func absDuration(value time.Duration) time.Duration {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func loadEffectiveConfig() (config.Config, string, error) {
