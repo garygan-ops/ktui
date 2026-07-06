@@ -24,24 +24,26 @@ func (a *App) renderLineBody(width int, bodyHeight int) []string {
 	}
 
 	a.clampSelection()
-	header := a.lineTableHeader(width)
-	visibleRows := max(1, bodyHeight-len(header))
+	visibleRows := max(1, bodyHeight-lineHeaderRows)
 	a.adjustScroll(visibleRows)
+	indicator := scrollIndicator{
+		Start:   lineHeaderRows,
+		Height:  visibleRows,
+		Offset:  a.listScroll,
+		Visible: visibleRows,
+		Total:   len(nodes),
+	}
+	contentWidth := scrollContentWidth(width, indicator)
+	header := a.lineTableHeader(contentWidth)
 
 	lines := make([]string, 0, bodyHeight)
 	lines = append(lines, header...)
 	end := min(len(nodes), a.listScroll+visibleRows)
 	for i := a.listScroll; i < end; i++ {
-		lines = append(lines, a.lineTableRow(i, nodes[i], width))
+		lines = append(lines, a.lineTableRow(i, nodes[i], contentWidth))
 	}
-	lines = fillBody(lines, width, bodyHeight)
-	return a.withScrollIndicator(lines, width, scrollIndicator{
-		Start:   len(header),
-		Height:  visibleRows,
-		Offset:  a.listScroll,
-		Visible: visibleRows,
-		Total:   len(nodes),
-	})
+	lines = fillBody(lines, contentWidth, bodyHeight)
+	return a.withScrollIndicator(lines, width, indicator)
 }
 
 func (a *App) lineTableHeader(width int) []string {

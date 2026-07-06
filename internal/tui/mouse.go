@@ -242,7 +242,8 @@ func (a *App) clickSheet(ctx context.Context, x int, y int) {
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
-	columns, cardWidth := sheetLayout(drawWidth)
+	nodes := a.viewNodes()
+	layout := sheetBodyMetricsFor(drawWidth, bodyHeight, len(nodes), a.listScroll)
 	bodyRow := y - mouseHeaderRows - 1 - a.listSearchRows()
 	if bodyRow < 0 {
 		return
@@ -253,20 +254,19 @@ func (a *App) clickSheet(ctx context.Context, x int, y int) {
 		return
 	}
 	x0 := x - 1
-	columnSpan := cardWidth + sheetCardGap
+	columnSpan := layout.CardWidth + sheetCardGap
 	col := x0 / columnSpan
-	if col < 0 || col >= columns {
+	if col < 0 || col >= layout.Columns {
 		return
 	}
-	if x0%columnSpan >= cardWidth {
+	if x0%columnSpan >= layout.CardWidth {
 		return
 	}
-	rowsVisible := max(1, bodyHeight/sheetCardHeight)
-	if row >= rowsVisible {
+	if row >= layout.RowsVisible {
 		return
 	}
-	index := (a.listScroll+row)*columns + col
-	if index >= 0 && index < len(a.viewNodes()) {
+	index := (a.listScroll+row)*layout.Columns + col
+	if index >= 0 && index < len(nodes) {
 		a.selected = index
 		a.clampSelection()
 		a.openSelectedDetail(ctx)
@@ -468,6 +468,46 @@ func sheetLayout(width int) (int, int) {
 		cardWidth = (width - sheetCardGap*(columns-1)) / columns
 	}
 	return columns, cardWidth
+}
+
+type sheetBodyMetrics struct {
+	ContentWidth int
+	Columns      int
+	CardWidth    int
+	RowsVisible  int
+	TotalRows    int
+	Indicator    scrollIndicator
+}
+
+func sheetBodyMetricsFor(width int, bodyHeight int, nodeCount int, offset int) sheetBodyMetrics {
+	rowsVisible := max(1, bodyHeight/sheetCardHeight)
+	columns, cardWidth := sheetLayout(width)
+	totalRows := sheetRows(nodeCount, columns)
+	indicator := scrollIndicator{
+		Start:   0,
+		Height:  bodyHeight,
+		Offset:  offset,
+		Visible: rowsVisible,
+		Total:   totalRows,
+	}
+	contentWidth := scrollContentWidth(width, indicator)
+	if contentWidth != width {
+		columns, cardWidth = sheetLayout(contentWidth)
+		totalRows = sheetRows(nodeCount, columns)
+		indicator.Total = totalRows
+	}
+	return sheetBodyMetrics{
+		ContentWidth: contentWidth,
+		Columns:      columns,
+		CardWidth:    cardWidth,
+		RowsVisible:  rowsVisible,
+		TotalRows:    totalRows,
+		Indicator:    indicator,
+	}
+}
+
+func sheetRows(nodeCount int, columns int) int {
+	return (nodeCount + max(1, columns) - 1) / max(1, columns)
 }
 
 func hitDetailTab(x int) (int, bool) {

@@ -24,36 +24,35 @@ func (a *App) renderSheetBody(width int, bodyHeight int) []string {
 	}
 
 	cardHeight := sheetCardHeight
-	columns, cardWidth := sheetLayout(width)
-
-	rowsVisible := max(1, bodyHeight/cardHeight)
-	selectedRow := a.selected / columns
+	layout := sheetBodyMetricsFor(width, bodyHeight, len(nodes), a.listScroll)
+	selectedRow := a.selected / layout.Columns
 	if selectedRow < a.listScroll {
 		a.listScroll = selectedRow
 	}
-	if selectedRow >= a.listScroll+rowsVisible {
-		a.listScroll = selectedRow - rowsVisible + 1
+	if selectedRow >= a.listScroll+layout.RowsVisible {
+		a.listScroll = selectedRow - layout.RowsVisible + 1
 	}
-	maxScroll := max(0, (len(nodes)+columns-1)/columns-rowsVisible)
+	maxScroll := max(0, layout.TotalRows-layout.RowsVisible)
 	if a.listScroll > maxScroll {
 		a.listScroll = maxScroll
 	}
 	if a.listScroll < 0 {
 		a.listScroll = 0
 	}
+	layout = sheetBodyMetricsFor(width, bodyHeight, len(nodes), a.listScroll)
 
 	lines := make([]string, 0, bodyHeight)
 	startRow := a.listScroll
-	endRow := min((len(nodes)+columns-1)/columns, startRow+rowsVisible)
+	endRow := min(layout.TotalRows, startRow+layout.RowsVisible)
 	for row := startRow; row < endRow; row++ {
-		rowCards := make([][]string, 0, columns)
-		for col := 0; col < columns; col++ {
-			index := row*columns + col
+		rowCards := make([][]string, 0, layout.Columns)
+		for col := 0; col < layout.Columns; col++ {
+			index := row*layout.Columns + col
 			if index >= len(nodes) {
-				rowCards = append(rowCards, emptyCard(cardWidth, cardHeight))
+				rowCards = append(rowCards, emptyCard(layout.CardWidth, cardHeight))
 				continue
 			}
-			rowCards = append(rowCards, a.nodeCard(index, nodes[index], cardWidth, cardHeight))
+			rowCards = append(rowCards, a.nodeCard(index, nodes[index], layout.CardWidth, cardHeight))
 		}
 		for lineIndex := 0; lineIndex < cardHeight; lineIndex++ {
 			var line strings.Builder
@@ -63,17 +62,11 @@ func (a *App) renderSheetBody(width int, bodyHeight int) []string {
 				}
 				line.WriteString(card[lineIndex])
 			}
-			lines = append(lines, fitLine(line.String(), width))
+			lines = append(lines, fitLine(line.String(), layout.ContentWidth))
 		}
 	}
-	lines = fillBody(lines, width, bodyHeight)
-	return a.withScrollIndicator(lines, width, scrollIndicator{
-		Start:   0,
-		Height:  bodyHeight,
-		Offset:  a.listScroll,
-		Visible: rowsVisible,
-		Total:   (len(nodes) + columns - 1) / columns,
-	})
+	lines = fillBody(lines, layout.ContentWidth, bodyHeight)
+	return a.withScrollIndicator(lines, width, layout.Indicator)
 }
 
 func (a *App) nodeCard(index int, node komari.Node, width int, height int) []string {
@@ -92,15 +85,14 @@ func (a *App) nodeCard(index int, node komari.Node, width int, height int) []str
 		if i < len(body) {
 			content = body[i]
 		}
-		line := a.style.boxLine(content, width)
 		if index == a.selected && i == 0 && !a.style.NoColor {
-			line = a.style.bold(line)
+			content = a.style.bold(content)
 		} else if alert.Critical || alert.Warning {
-			line = a.styleAlertLine(line, alert)
+			content = a.styleAlertLine(content, alert)
 		} else if !st.Online {
-			line = a.style.dim(line)
+			content = a.style.dim(content)
 		}
-		lines = append(lines, line)
+		lines = append(lines, a.cardBoxLine(content, width, index == a.selected, alert))
 	}
 	lines = append(lines, a.cardBottomForAlert(width, index == a.selected, alert))
 	return lines
@@ -220,4 +212,21 @@ func (a *App) cardBottomForAlert(width int, selected bool, alert nodeAlert) stri
 		return a.styleAlertLine(line, alert)
 	}
 	return a.style.dim(line)
+}
+
+func (a *App) cardBoxLine(content string, width int, selected bool, alert nodeAlert) string {
+	return a.style.boxLineWithBorder(content, width, a.cardBorderStyle(selected, alert))
+}
+
+func (a *App) cardBorderStyle(selected bool, alert nodeAlert) func(string) string {
+	switch {
+	case selected:
+		return a.style.cyan
+	case alert.Critical || alert.Warning:
+		return func(value string) string {
+			return a.styleAlertLine(value, alert)
+		}
+	default:
+		return a.style.dim
+	}
 }

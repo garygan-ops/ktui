@@ -127,6 +127,39 @@ func TestDetailBodyShowsScrollIndicatorWhenMoreContentExists(t *testing.T) {
 	}
 }
 
+func TestDetailBodyReservesColumnForScrollIndicator(t *testing.T) {
+	app := NewWithOptions(nil, Options{ASCII: true, NoColor: true})
+	node := komari.Node{UUID: "node-1", Name: "node", MemTotal: 1000, DiskTotal: 2000}
+	app.snapshot = komari.Snapshot{
+		Nodes:  []komari.Node{node},
+		Status: map[string]komari.Status{node.UUID: {Online: true, CPU: 10}},
+	}
+	app.detail = true
+
+	lines := app.renderDetailBody(80, 12)
+	if len(lines) < 5 {
+		t.Fatalf("lines len = %d, want detail chrome and content", len(lines))
+	}
+	top := stripANSI(lines[4])
+	if displayWidth(top) != 80 {
+		t.Fatalf("top line width = %d, want 80: %q", displayWidth(top), top)
+	}
+	if !strings.HasSuffix(top, "#") {
+		t.Fatalf("top line = %q, want scroll thumb in final column", top)
+	}
+	if top[len(top)-2] != '+' {
+		t.Fatalf("top line = %q, want card border before scroll indicator", top)
+	}
+
+	bottom := stripANSI(lines[10])
+	if !strings.HasSuffix(bottom, "v") {
+		t.Fatalf("bottom line = %q, want down scroll indicator in final column", bottom)
+	}
+	if bottom[len(bottom)-2] != '+' {
+		t.Fatalf("bottom line = %q, want card border before scroll indicator", bottom)
+	}
+}
+
 func TestChartFocusOpensAndClosesWithKeys(t *testing.T) {
 	app := NewWithOptions(nil, Options{ASCII: true})
 	node := komari.Node{UUID: "node-1", Name: "node", MemTotal: 1000, DiskTotal: 2000}

@@ -281,17 +281,24 @@ func (s Style) boxBottom(width int) string {
 }
 
 func (s Style) boxLine(content string, width int) string {
+	return s.boxLineWithBorder(content, width, func(value string) string { return value })
+}
+
+func (s Style) boxLineWithBorder(content string, width int, borderStyle func(string) string) string {
 	if width <= 0 {
 		return ""
 	}
 	if width == 1 {
-		return "|"
+		if s.ASCII {
+			return borderStyle("|")
+		}
+		return borderStyle("│")
 	}
 	left, right := "│", "│"
 	if s.ASCII {
 		left, right = "|", "|"
 	}
-	return left + fitLine(content, max(0, width-2)) + right
+	return borderStyle(left) + fitLine(content, max(0, width-2)) + borderStyle(right)
 }
 
 func (s Style) vertical() string {
@@ -454,73 +461,51 @@ func sliceVisible(s string, start int, width int) string {
 }
 
 func (s Style) inverse(value string) string {
-	if s.NoColor {
-		return value
-	}
-	return "\x1b[7m" + value + "\x1b[0m"
+	return s.wrapSGR("7", value)
 }
 
 func (s Style) bold(value string) string {
-	if s.NoColor {
-		return value
-	}
-	return "\x1b[1m" + value + "\x1b[0m"
+	return s.wrapSGR("1", value)
 }
 
 func (s Style) dim(value string) string {
-	if s.NoColor {
-		return value
-	}
-	return "\x1b[2m" + value + "\x1b[0m"
+	return s.wrapSGR("2", value)
 }
 
 func (s Style) red(value string) string {
-	if s.NoColor {
-		return value
-	}
-	return "\x1b[31m" + value + "\x1b[0m"
+	return s.wrapSGR("31", value)
 }
 
 func (s Style) green(value string) string {
-	if s.NoColor {
-		return value
-	}
-	return "\x1b[32m" + value + "\x1b[0m"
+	return s.wrapSGR("32", value)
 }
 
 func (s Style) yellow(value string) string {
-	if s.NoColor {
-		return value
-	}
-	return "\x1b[33m" + value + "\x1b[0m"
+	return s.wrapSGR("33", value)
 }
 
 func (s Style) blue(value string) string {
-	if s.NoColor {
-		return value
-	}
-	return "\x1b[34m" + value + "\x1b[0m"
+	return s.wrapSGR("34", value)
 }
 
 func (s Style) cyan(value string) string {
-	if s.NoColor {
-		return value
-	}
-	return "\x1b[36m" + value + "\x1b[0m"
+	return s.wrapSGR("36", value)
 }
 
 func (s Style) color256(code int, value string) string {
-	if s.NoColor {
-		return value
-	}
-	return fmt.Sprintf("\x1b[38;5;%dm%s\x1b[0m", code, value)
+	return s.wrapSGR(fmt.Sprintf("38;5;%d", code), value)
 }
 
 func (s Style) bg256(code int, value string) string {
+	return s.wrapSGR(fmt.Sprintf("48;5;%d", code), value)
+}
+
+func (s Style) wrapSGR(code string, value string) string {
 	if s.NoColor {
 		return value
 	}
-	return fmt.Sprintf("\x1b[48;5;%dm%s\x1b[0m", code, value)
+	prefix := "\x1b[" + code + "m"
+	return prefix + strings.ReplaceAll(value, "\x1b[0m", "\x1b[0m"+prefix) + "\x1b[0m"
 }
 
 func (s Style) coloredStatus(online bool) string {

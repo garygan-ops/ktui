@@ -40,6 +40,17 @@ func (a *App) renderDetailBody(width int, bodyHeight int) []string {
 	}
 
 	content := a.detailContentLines(node, st, width, cardHeight)
+	contentWidth := scrollContentWidth(width, scrollIndicator{
+		Start:   len(chrome),
+		Height:  contentHeight,
+		Offset:  a.detailScroll,
+		Visible: contentHeight,
+		Total:   len(content),
+	})
+	if contentWidth != width {
+		chrome = a.detailChromeLines(node, st, contentWidth)
+		content = a.detailContentLines(node, st, contentWidth, cardHeight)
+	}
 	if contentHeight >= cardHeight {
 		a.detailScroll = a.detailScroll / cardHeight * cardHeight
 	}
@@ -57,7 +68,7 @@ func (a *App) renderDetailBody(width int, bodyHeight int) []string {
 	lines := make([]string, 0, bodyHeight)
 	lines = append(lines, chrome...)
 	lines = append(lines, content[a.detailScroll:end]...)
-	lines = fillBody(lines, width, bodyHeight)
+	lines = fillBody(lines, contentWidth, bodyHeight)
 	return a.withScrollIndicator(lines, width, scrollIndicator{
 		Start:   len(chrome),
 		Height:  contentHeight,
@@ -280,7 +291,7 @@ func (a *App) detailSectionCard(section detailSection, width int, height int) []
 	lines := make([]string, 0, height)
 	lines = append(lines, a.cardTop(width, false))
 	title := " " + a.style.bold(section.Title)
-	lines = append(lines, a.style.boxLine(title, width))
+	lines = append(lines, a.cardBoxLine(title, width, false, nodeAlert{}))
 	contentHeight := height - 3
 	contentLines := section.Lines
 	if section.Chart != nil {
@@ -291,7 +302,7 @@ func (a *App) detailSectionCard(section detailSection, width int, height int) []
 		if i < len(contentLines) {
 			content = contentLines[i]
 		}
-		lines = append(lines, a.style.boxLine(content, width))
+		lines = append(lines, a.cardBoxLine(content, width, false, nodeAlert{}))
 	}
 	lines = append(lines, a.cardBottom(width, false))
 	return lines

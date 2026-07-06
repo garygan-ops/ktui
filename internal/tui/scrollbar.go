@@ -14,7 +14,7 @@ type scrollIndicator struct {
 }
 
 func (a *App) withScrollIndicator(lines []string, width int, indicator scrollIndicator) []string {
-	if width < 4 || indicator.Height <= 0 || indicator.Visible <= 0 || indicator.Total <= indicator.Visible {
+	if !scrollIndicatorVisible(width, indicator) {
 		return lines
 	}
 	start := max(0, indicator.Start)
@@ -64,6 +64,17 @@ func (a *App) withScrollIndicator(lines []string, width int, indicator scrollInd
 		out[i] = fitLineNoEllipsis(out[i], width-1) + mark
 	}
 	return out
+}
+
+func scrollContentWidth(width int, indicator scrollIndicator) int {
+	if scrollIndicatorVisible(width, indicator) {
+		return max(1, width-1)
+	}
+	return width
+}
+
+func scrollIndicatorVisible(width int, indicator scrollIndicator) bool {
+	return width >= 4 && indicator.Height > 0 && indicator.Visible > 0 && indicator.Total > indicator.Visible
 }
 
 func (a *App) scrollIndicatorGlyphs() (string, string, string, string) {
