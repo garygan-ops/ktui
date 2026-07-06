@@ -65,11 +65,11 @@ release:
   header: |
     ## 本次更新重点
 
-    - 新增节点状态导出：支持 `ktui export json`、`ktui export csv` 和 `ktui export markdown`，方便排查问题、生成报告或分享当前节点状态。
-    - 新增流量阈值展示：列表、详情和导出结果会显示节点总流量使用率、上下行用量和 Komari 配置的流量限制。
-    - 改进 TUI 可读性：列表和详情页增加滚动提示，7d/30d 图表横坐标改为显示日期，长周期图表更容易判断时间范围。
-    - 改进图表聚焦体验：Realtime 聚焦模式切换窗口时，即使新窗口数据还在加载，也会停留在聚焦页并显示加载提示。
-    - 修复 Windows/WezTerm Realtime 图表空白问题：启动 TUI 前会校验本机时间与 Komari 服务端时间，时间偏差过大时提示用户修正系统时间后再进入应用。
+    - 新增 About 视图：按 `?` 可以查看 ktui 构建信息、Komari 服务端信息、连接状态、显示设置和常用命令。
+    - 重构命令行结构：新增 `ktui status`，将更新命令拆为 `ktui update check` 和 `ktui update install`，并使用 `--mode sheet|line` 统一显示模式参数。
+    - 新增 Komari 服务端更新提示：TUI 会根据当前 Komari 服务端版本检查 `komari-monitor/komari` GitHub Release，有新版本时可按 `u` 查看更新详情。
+    - 改进 TUI 交互与发现性：设置页可进入 About，About 支持键盘和鼠标滚动，底部操作提示覆盖更多视图。
+    - 修复滚动条和边框显示问题：避免滚动条与表格边沿重合，并统一 ASCII / UTF-8 模式下边框颜色。
 
     本 Release 由 GoReleaser 自动生成。
 
