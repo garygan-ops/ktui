@@ -86,6 +86,8 @@ func parseKeysWithRemainder(data []byte) ([]keyEvent, []byte) {
 			out = append(out, keyEvent{name: "settings", text: string(data[i])})
 		case 'u', 'U':
 			out = append(out, keyEvent{name: "update-hint", text: string(data[i])})
+		case '?':
+			out = append(out, keyEvent{name: "about", text: string(data[i])})
 		case '/':
 			out = append(out, keyEvent{name: "search", text: "/"})
 		case 'c', 'C':
@@ -266,10 +268,17 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 		if a.settingsScroll < 0 {
 			a.settingsScroll = 0
 		}
+		if a.aboutScroll < 0 {
+			a.aboutScroll = 0
+		}
 		return
 	}
 	if a.searchEditing {
 		a.handleSearchKey(key)
+		return
+	}
+	if a.about {
+		a.handleAboutKey(key)
 		return
 	}
 	if a.settings {
@@ -301,6 +310,8 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 		a.openSettings()
 	case "update-hint":
 		a.showUpdateHint()
+	case "about":
+		a.openAbout()
 	case "search":
 		if !a.detail {
 			a.openSearch()
@@ -430,6 +441,9 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 	if a.detailScroll < 0 {
 		a.detailScroll = 0
 	}
+	if a.aboutScroll < 0 {
+		a.aboutScroll = 0
+	}
 	if a.detail && (previous != a.selected || previousTab != a.tab || previousWindow != a.window || a.tabNeedsDetail()) {
 		a.ensureSelectedDetail(ctx)
 	}
@@ -510,6 +524,8 @@ func (a *App) handleSettingsKey(key keyEvent) {
 		a.quit = true
 	case "quit", "back", "settings":
 		a.closeSettings()
+	case "about":
+		a.openAbout()
 	case "up":
 		a.moveSettingsSelection(-1)
 	case "down":
@@ -527,6 +543,34 @@ func (a *App) handleSettingsKey(key keyEvent) {
 	case "ascii":
 		a.style.ASCII = !a.style.ASCII
 		a.persistSettings()
+	}
+}
+
+func (a *App) handleAboutKey(key keyEvent) {
+	switch key.name {
+	case "force-quit":
+		a.quit = true
+	case "quit", "back", "about":
+		a.closeAbout()
+	case "up":
+		a.aboutScroll--
+	case "down":
+		a.aboutScroll++
+	case "pageup":
+		a.aboutScroll -= 6
+	case "pagedown":
+		a.aboutScroll += 6
+	case "top":
+		a.aboutScroll = 0
+	case "bottom":
+		a.aboutScroll = 1 << 30
+	case "refresh":
+		a.requestFullRefresh()
+	case "update-hint":
+		a.showUpdateHint()
+	}
+	if a.aboutScroll < 0 {
+		a.aboutScroll = 0
 	}
 }
 

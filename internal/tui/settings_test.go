@@ -23,7 +23,7 @@ func TestSettingsKeyOpensSettingsPage(t *testing.T) {
 
 	lines := app.renderSettingsBody(80, 18)
 	joined := strings.Join(lines, "\n")
-	for _, label := range []string{"url", "api_key", "interval", "timeout", "mode", "realtime_points", "chart_y_axis", "ascii", "no_color", "warn_cpu", "warn_ram", "warn_disk", "warn_expiry_days"} {
+	for _, label := range []string{"url", "api_key", "interval", "timeout", "mode", "realtime_points", "chart_y_axis", "ascii", "no_color", "warn_cpu", "warn_ram", "warn_disk", "warn_expiry_days", "about"} {
 		if !strings.Contains(joined, label) {
 			t.Fatalf("settings body missing %s: %#v", label, lines)
 		}
@@ -37,7 +37,7 @@ func TestSettingsItemsIncludeAllConfigFields(t *testing.T) {
 	for _, item := range items {
 		got = append(got, item.Label)
 	}
-	want := []string{"url", "api_key", "interval", "timeout", "mode", "realtime_points", "chart_y_axis", "ascii", "no_color", "warn_cpu", "warn_ram", "warn_disk", "warn_expiry_days"}
+	want := []string{"url", "api_key", "interval", "timeout", "mode", "realtime_points", "chart_y_axis", "ascii", "no_color", "warn_cpu", "warn_ram", "warn_disk", "warn_expiry_days", "about"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("settings labels = %#v, want %#v", got, want)
 	}
@@ -90,6 +90,45 @@ func TestReadOnlySettingsDoNotPersist(t *testing.T) {
 	}
 	if app.settingsStatus != "read only" {
 		t.Fatalf("settingsStatus = %q, want read only", app.settingsStatus)
+	}
+}
+
+func TestSettingsAboutItemOpensAboutWithoutPersisting(t *testing.T) {
+	called := false
+	app := NewWithOptions(nil, Options{
+		SaveSettings: func(settings PersistentSettings) error {
+			called = true
+			return nil
+		},
+	})
+	app.settings = true
+	selectSetting(t, app, "about")
+
+	app.handleSettingsKey(keyEvent{name: "open"})
+	if called {
+		t.Fatal("about setting should not persist settings")
+	}
+	if !app.about || app.settings {
+		t.Fatalf("about=%t settings=%t, want about open from settings", app.about, app.settings)
+	}
+	app.handleAboutKey(keyEvent{name: "back"})
+	if app.about || !app.settings {
+		t.Fatalf("about=%t settings=%t, want settings restored", app.about, app.settings)
+	}
+}
+
+func TestSettingsAboutReturnPreservesDetailRestore(t *testing.T) {
+	app := NewWithOptions(nil, Options{})
+	app.detail = true
+	app.handleKey(context.Background(), keyEvent{name: "settings"})
+	selectSetting(t, app, "about")
+
+	app.handleSettingsKey(keyEvent{name: "open"})
+	app.handleAboutKey(keyEvent{name: "back"})
+	app.handleSettingsKey(keyEvent{name: "back"})
+
+	if app.about || app.settings || !app.detail {
+		t.Fatalf("about=%t settings=%t detail=%t, want detail restored", app.about, app.settings, app.detail)
 	}
 }
 

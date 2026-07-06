@@ -3,39 +3,49 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"ktui/internal/komari"
 )
 
 type App struct {
-	client          *komari.Client
-	refreshInterval time.Duration
-	fetchTimeout    time.Duration
-	detailTimeout   time.Duration
-	detailCacheTTL  time.Duration
-	realtimePoints  int
-	saveSettings    func(PersistentSettings) error
-	checkUpdate     func(context.Context) (UpdateCheckResult, error)
-	style           Style
-	mode            Mode
+	client            *komari.Client
+	refreshInterval   time.Duration
+	fetchTimeout      time.Duration
+	detailTimeout     time.Duration
+	detailCacheTTL    time.Duration
+	realtimePoints    int
+	saveSettings      func(PersistentSettings) error
+	checkUpdate       func(context.Context) (UpdateCheckResult, error)
+	checkKomariUpdate func(context.Context, string) (KomariUpdateCheckResult, error)
+	appVersion        string
+	appCommit         string
+	appBuildDate      string
+	style             Style
+	mode              Mode
 
 	selected          int
 	listScroll        int
 	detailScroll      int
 	settingsScroll    int
+	aboutScroll       int
 	tab               int
 	window            int
 	detail            bool
 	chartFocus        bool
 	chartFocusIndex   int
 	settings          bool
+	about             bool
 	cardStep          int
 	settingsWasDetail bool
 	settingsSelected  int
 	settingsStatus    string
 	settingsURL       string
 	settingsAPIKey    string
+	aboutWasDetail    bool
+	aboutWasSettings  bool
+	aboutWasChart     bool
 	chartYAxisMode    chartYAxisMode
 	warnCPU           float64
 	warnRAM           float64
@@ -54,11 +64,12 @@ type App struct {
 	frameHeight int
 	viewCache   viewNodesCache
 
-	snapshot komari.Snapshot
-	err      error
-	loading  bool
-	fetching bool
-	update   updateState
+	snapshot     komari.Snapshot
+	err          error
+	loading      bool
+	fetching     bool
+	update       updateState
+	komariUpdate komariUpdateState
 	// At most one refresh is queued while an in-flight request is finishing.
 	refreshPending  bool
 	intervalChanged bool
@@ -71,38 +82,51 @@ type App struct {
 	nodeDetail     map[detailKey]nodeDetail
 	realtimeStatus map[string][]komari.Status
 
-	renderCh  chan struct{}
-	refreshCh chan struct{}
-	resultCh  chan fetchResult
-	detailCh  chan detailResult
-	updateCh  chan updateResult
-	keyCh     chan keyEvent
+	renderCh       chan struct{}
+	refreshCh      chan struct{}
+	resultCh       chan fetchResult
+	detailCh       chan detailResult
+	updateCh       chan updateResult
+	komariUpdateCh chan komariUpdateResult
+	keyCh          chan keyEvent
 }
 
 type Options struct {
-	URL             string
-	APIKey          string
-	RefreshInterval time.Duration
-	FetchTimeout    time.Duration
-	DetailTimeout   time.Duration
-	DetailCacheTTL  time.Duration
-	RealtimePoints  int
-	ChartYAxisMode  string
-	WarnCPU         float64
-	WarnRAM         float64
-	WarnDisk        float64
-	WarnExpiryDays  int
-	SaveSettings    func(PersistentSettings) error
-	CheckUpdate     func(context.Context) (UpdateCheckResult, error)
-	ASCII           bool
-	NoColor         bool
-	Mode            Mode
+	URL               string
+	APIKey            string
+	RefreshInterval   time.Duration
+	FetchTimeout      time.Duration
+	DetailTimeout     time.Duration
+	DetailCacheTTL    time.Duration
+	RealtimePoints    int
+	ChartYAxisMode    string
+	WarnCPU           float64
+	WarnRAM           float64
+	WarnDisk          float64
+	WarnExpiryDays    int
+	SaveSettings      func(PersistentSettings) error
+	CheckUpdate       func(context.Context) (UpdateCheckResult, error)
+	CheckKomariUpdate func(context.Context, string) (KomariUpdateCheckResult, error)
+	Version           string
+	Commit            string
+	BuildDate         string
+	ASCII             bool
+	NoColor           bool
+	Mode              Mode
 }
 
 type UpdateCheckResult struct {
 	CurrentVersion string
 	LatestVersion  string
 	AssetName      string
+	Available      bool
+}
+
+type KomariUpdateCheckResult struct {
+	CurrentVersion string
+	LatestVersion  string
+	ReleaseURL     string
+	ReleaseCount   int
 	Available      bool
 }
 
@@ -181,6 +205,11 @@ type updateResult struct {
 	err    error
 }
 
+type komariUpdateResult struct {
+	result KomariUpdateCheckResult
+	err    error
+}
+
 type updateState struct {
 	Checking  bool
 	Checked   bool
@@ -188,6 +217,17 @@ type updateState struct {
 	Latest    string
 	AssetName string
 	Err       error
+}
+
+type komariUpdateState struct {
+	Checking     bool
+	Checked      bool
+	Available    bool
+	Current      string
+	Latest       string
+	ReleaseURL   string
+	ReleaseCount int
+	Err          error
 }
 
 type detailKey struct {
@@ -278,6 +318,15 @@ func NewWithOptions(client *komari.Client, opts Options) *App {
 	if opts.Mode == "" {
 		opts.Mode = ModeSheet
 	}
+	if opts.Version == "" {
+		opts.Version = "dev"
+	}
+	if opts.Commit == "" {
+		opts.Commit = "none"
+	}
+	if opts.BuildDate == "" {
+		opts.BuildDate = "unknown"
+	}
 	if opts.WarnCPU <= 0 {
 		opts.WarnCPU = 90
 	}
@@ -291,34 +340,39 @@ func NewWithOptions(client *komari.Client, opts Options) *App {
 		opts.WarnExpiryDays = 7
 	}
 	return &App{
-		client:          client,
-		refreshInterval: opts.RefreshInterval,
-		fetchTimeout:    opts.FetchTimeout,
-		detailTimeout:   opts.DetailTimeout,
-		detailCacheTTL:  opts.DetailCacheTTL,
-		realtimePoints:  opts.RealtimePoints,
-		checkUpdate:     opts.CheckUpdate,
-		settingsURL:     opts.URL,
-		settingsAPIKey:  opts.APIKey,
-		style:           Style{ASCII: opts.ASCII, NoColor: opts.NoColor},
-		mode:            opts.Mode,
-		warnCPU:         opts.WarnCPU,
-		warnRAM:         opts.WarnRAM,
-		warnDisk:        opts.WarnDisk,
-		warnExpiryDays:  opts.WarnExpiryDays,
-		nodeFilter:      nodeFilterAll,
-		nodeSort:        nodeSortDefault,
-		renderCh:        make(chan struct{}, 1),
-		refreshCh:       make(chan struct{}, 2),
-		resultCh:        make(chan fetchResult, 2),
-		detailCh:        make(chan detailResult, 4),
-		updateCh:        make(chan updateResult, 1),
-		keyCh:           make(chan keyEvent, 16),
-		loading:         true,
-		nodeDetail:      map[detailKey]nodeDetail{},
-		realtimeStatus:  map[string][]komari.Status{},
-		chartYAxisMode:  chartYAxisMode,
-		saveSettings:    opts.SaveSettings,
+		client:            client,
+		refreshInterval:   opts.RefreshInterval,
+		fetchTimeout:      opts.FetchTimeout,
+		detailTimeout:     opts.DetailTimeout,
+		detailCacheTTL:    opts.DetailCacheTTL,
+		realtimePoints:    opts.RealtimePoints,
+		checkUpdate:       opts.CheckUpdate,
+		checkKomariUpdate: opts.CheckKomariUpdate,
+		appVersion:        opts.Version,
+		appCommit:         opts.Commit,
+		appBuildDate:      opts.BuildDate,
+		settingsURL:       opts.URL,
+		settingsAPIKey:    opts.APIKey,
+		style:             Style{ASCII: opts.ASCII, NoColor: opts.NoColor},
+		mode:              opts.Mode,
+		warnCPU:           opts.WarnCPU,
+		warnRAM:           opts.WarnRAM,
+		warnDisk:          opts.WarnDisk,
+		warnExpiryDays:    opts.WarnExpiryDays,
+		nodeFilter:        nodeFilterAll,
+		nodeSort:          nodeSortDefault,
+		renderCh:          make(chan struct{}, 1),
+		refreshCh:         make(chan struct{}, 2),
+		resultCh:          make(chan fetchResult, 2),
+		detailCh:          make(chan detailResult, 4),
+		updateCh:          make(chan updateResult, 1),
+		komariUpdateCh:    make(chan komariUpdateResult, 1),
+		keyCh:             make(chan keyEvent, 16),
+		loading:           true,
+		nodeDetail:        map[detailKey]nodeDetail{},
+		realtimeStatus:    map[string][]komari.Status{},
+		chartYAxisMode:    chartYAxisMode,
+		saveSettings:      opts.SaveSettings,
 	}
 }
 
@@ -378,6 +432,7 @@ func (a *App) Run(ctx context.Context) error {
 				if a.detail {
 					a.ensureSelectedDetail(ctx)
 				}
+				a.maybeStartKomariUpdateCheck(ctx)
 			} else {
 				a.recordRealtimeSample(a.realtimeNowOrTime(time.Now()))
 			}
@@ -401,6 +456,9 @@ func (a *App) Run(ctx context.Context) error {
 				}
 			}
 			a.render()
+		case update := <-a.komariUpdateCh:
+			a.applyKomariUpdateResult(update)
+			a.render()
 		case key := <-a.keyCh:
 			a.handleKey(ctx, key)
 			a.render()
@@ -409,6 +467,52 @@ func (a *App) Run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (a *App) maybeStartKomariUpdateCheck(ctx context.Context) {
+	if a.checkKomariUpdate == nil {
+		return
+	}
+	current := strings.TrimSpace(a.snapshot.Version.Version)
+	if current == "" || a.komariUpdate.Checking {
+		return
+	}
+	if a.komariUpdate.Checked && a.komariUpdate.Current == current {
+		return
+	}
+	a.komariUpdate = komariUpdateState{Checking: true, Current: current}
+	go func() {
+		result, err := a.checkKomariUpdate(ctx, current)
+		select {
+		case a.komariUpdateCh <- komariUpdateResult{result: result, err: err}:
+		case <-ctx.Done():
+		}
+	}()
+}
+
+func (a *App) applyKomariUpdateResult(update komariUpdateResult) {
+	current := update.result.CurrentVersion
+	if strings.TrimSpace(current) == "" {
+		current = a.komariUpdate.Current
+	}
+	a.komariUpdate.Checking = false
+	a.komariUpdate.Checked = true
+	a.komariUpdate.Current = current
+	a.komariUpdate.Err = update.err
+	if update.err != nil {
+		a.komariUpdate.Available = false
+		a.komariUpdate.Latest = ""
+		a.komariUpdate.ReleaseURL = ""
+		a.komariUpdate.ReleaseCount = 0
+		return
+	}
+	a.komariUpdate.Available = update.result.Available
+	a.komariUpdate.Latest = update.result.LatestVersion
+	a.komariUpdate.ReleaseURL = update.result.ReleaseURL
+	a.komariUpdate.ReleaseCount = update.result.ReleaseCount
+	if update.result.Available {
+		a.notice = ""
+	}
 }
 
 func (a *App) startUpdateCheck(ctx context.Context) {

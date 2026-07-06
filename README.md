@@ -29,6 +29,7 @@ https://www.nodeseek.com/post-710243-1
 - 支持终端窗口大小变化，窄窗口下会自动裁剪和滚动
 - 支持鼠标和触控板：列表点击选择、滚轮滚动，详情页可滚动并点击切换标签/窗口
 - 支持 ASCII / 无颜色兼容模式，适合 Unicode 显示异常的终端
+- 支持后台检查 ktui 自身更新和 Komari 服务端新版本提示
 - 支持远程一行安装脚本，自动识别系统和 CPU 架构并下载对应 Release
 
 ## 安装
@@ -85,6 +86,7 @@ go run ./cmd/ktui
 
 ```sh
 ./ktui help
+./ktui help status
 ./ktui help config
 ./ktui help keys
 ```
@@ -98,14 +100,14 @@ go run ./cmd/ktui
 检查或安装更新：
 
 ```sh
-./ktui update --check
-./ktui update
+./ktui update check
+./ktui update install
 ```
 
-进入 TUI 时会自动在后台检查是否有新版本。发现新版本后，界面顶部会提示 `UPDATE ... available`，底部会出现 `u update`；按 `u` 或点击该提示会显示更新命令。实际更新请退出 TUI 后运行：
+进入 TUI 时会自动在后台检查 ktui 自身是否有新版本，也会根据当前 Komari 服务端版本检查 `komari-monitor/komari` 的 GitHub Release。发现新版本后，界面顶部会提示 `UPDATE ... available`，底部会出现 `u update`；按 `u` 或点击该提示会显示可用更新详情。ktui 自身更新请退出 TUI 后运行：
 
 ```sh
-ktui update
+ktui update install
 ```
 
 指定 Komari 地址：
@@ -123,18 +125,32 @@ ktui update
 只拉取一次并打印摘要，不进入 TUI：
 
 ```sh
-./ktui --once
+./ktui status
 ```
 
 导出当前节点状态：
 
 ```sh
-./ktui export json
-./ktui export csv --output nodes.csv
 ./ktui export markdown -o report.md
+./ktui export csv --output nodes.csv
+./ktui export json
 ```
 
 导出内容包含站点摘要、在线状态、CPU/RAM/磁盘百分比、实时网络、累计流量、流量上限占比、过期状态和异常原因。
+
+## 命令结构
+
+```text
+ktui [flags]
+ktui status [flags]
+ktui export <markdown|csv|json> [flags]
+ktui config <init|path|show|set|help>
+ktui update <check|install>
+ktui version
+ktui help [status|config|keys|update|export]
+```
+
+TUI 专属显示参数使用 `--mode sheet|line`。一次性拉取摘要使用 `ktui status`，更新检查和安装分别使用 `ktui update check`、`ktui update install`。
 
 ## 配置文件
 
@@ -222,13 +238,13 @@ KTUI_ASCII=1 NO_COLOR=1 ./ktui
 卡片视图，默认模式：
 
 ```sh
-./ktui --sheet
+./ktui --mode sheet
 ```
 
 逐行列表视图：
 
 ```sh
-./ktui --line
+./ktui --mode line
 ```
 
 `line` 模式会根据终端宽度自动增减列。宽屏下会显示 CPU、RAM、磁盘、地区、实时网络、负载、运行时间、累计流量、连接数、进程数、过期时间、系统和标签。
@@ -282,7 +298,8 @@ EXP -
 - `r`：立即刷新
 - `d`：打开或重新加载选中节点的详情数据
 - `a`：切换 ASCII 兼容模式
-- `u`：有新版本时显示更新命令
+- `u`：有新版本时显示 ktui 或 Komari 服务端更新详情
+- `?`：打开 about 视图
 - `q` / `Ctrl-C`：在列表页退出
 
 异常高亮阈值可以通过配置文件、`ktui config set warn-cpu 85`、`ktui config set warn-ram 85`、`ktui config set warn-disk 90`、`ktui config set warn-expiry-days 14` 或设置页调整。
@@ -299,12 +316,12 @@ ktui version
 
 ## 自更新
 
-`ktui update` 会从 Gitea Release 下载当前系统和架构对应的压缩包，使用 `checksums.txt` 校验后替换当前二进制。
+`ktui update install` 会从 Gitea Release 下载当前系统和架构对应的压缩包，使用 `checksums.txt` 校验后替换当前二进制。只检查新版本时使用 `ktui update check`。
 
 ```sh
-ktui update --check
-ktui update
-ktui update --tag v0.1.0
+ktui update check
+ktui update install
+ktui update install --tag v0.1.0
 ```
 
 默认更新源：
@@ -316,10 +333,10 @@ https://gitea.bytevibe.dev/api/v1/repos/gary/ktui
 如果仓库是私有仓库，可以通过环境变量传入 token：
 
 ```sh
-KTUI_UPDATE_TOKEN=your_token ktui update
+KTUI_UPDATE_TOKEN=your_token ktui update install
 ```
 
-Windows 无法在程序运行时直接替换当前 `.exe`，`ktui update` 会下载新文件并提示手动替换。
+Windows 无法在程序运行时直接替换当前 `.exe`，`ktui update install` 会下载新文件并提示手动替换。
 
 ## 详情页
 

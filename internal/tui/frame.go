@@ -118,7 +118,14 @@ func (a *App) headerLines(width int) []string {
 	if query := a.currentSearchQuery(); query != "" || a.searchEditing {
 		contextParts = append([]string{a.headerChip("search", valueOr(query, "-"))}, contextParts...)
 	}
-	if a.settings {
+	if a.about {
+		contextParts = []string{
+			a.headerChip("view", "about"),
+			a.headerChip("ktui", valueOr(a.appVersion, "dev")),
+			a.headerChip("komari", valueOr(a.snapshot.Version.Version, "-")),
+			a.headerChip("rpc", valueOr(a.snapshot.RPCVersion, "-")),
+		}
+	} else if a.settings {
 		contextParts = []string{
 			a.headerChip("view", "settings"),
 			a.headerChip("mode", string(a.mode)+"/"+mode),
@@ -146,9 +153,9 @@ func (a *App) headerLines(width int) []string {
 		context = a.style.red("ERROR " + a.err.Error())
 	} else if a.notice != "" {
 		context = a.style.yellow(a.notice)
-	} else if a.update.Available {
-		context = a.style.yellow(fmt.Sprintf("UPDATE %s available  run `ktui update`", valueOr(a.update.Latest, "latest")))
-	} else if a.update.Checking {
+	} else if updateText := a.updateHeaderText(); updateText != "" {
+		context = a.style.yellow(updateText)
+	} else if a.isCheckingUpdates() {
 		context = a.style.dim("checking for updates...")
 	}
 
@@ -254,6 +261,17 @@ func (a *App) footerItems() []footerItem {
 			{Action: footerNone, Labels: [footerLabelVariants]string{"Backspace delete", "Delete", "Del"}},
 		}
 	}
+	if a.about {
+		items := []footerItem{
+			{Action: footerBack, Labels: [footerLabelVariants]string{"Esc/q back", "Back", "B"}},
+			{Action: footerScroll, Labels: [footerLabelVariants]string{"j/k scroll", "Scroll", "J"}},
+			{Action: footerRefresh, Labels: [footerLabelVariants]string{"r refresh", "Refresh", "R"}},
+		}
+		if a.hasAvailableUpdate() {
+			items = append(items, footerItem{Action: footerUpdate, Labels: [footerLabelVariants]string{"u update", "Update", "U"}})
+		}
+		return items
+	}
 	if a.settings {
 		return []footerItem{
 			{Action: footerBack, Labels: [footerLabelVariants]string{"Esc/q back", "Back", "B"}},
@@ -280,7 +298,7 @@ func (a *App) footerItems() []footerItem {
 			{Action: footerSettings, Labels: [footerLabelVariants]string{"s settings", "Settings", "S"}},
 			{Action: footerRefresh, Labels: [footerLabelVariants]string{"r refresh", "Refresh", "R"}},
 		}
-		if a.update.Available {
+		if a.hasAvailableUpdate() {
 			items = append(items, footerItem{Action: footerUpdate, Labels: [footerLabelVariants]string{"u update", "Update", "U"}})
 		}
 		return items
@@ -297,7 +315,7 @@ func (a *App) footerItems() []footerItem {
 		{Action: footerASCII, Labels: [footerLabelVariants]string{"a ascii", "ASCII", "A"}},
 		{Action: footerQuit, Labels: [footerLabelVariants]string{"q quit", "Quit", "Q"}},
 	}
-	if a.update.Available {
+	if a.hasAvailableUpdate() {
 		items = append(items, footerItem{Action: footerUpdate, Labels: [footerLabelVariants]string{"u update", "Update", "U"}})
 	}
 	return items

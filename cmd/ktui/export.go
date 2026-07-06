@@ -655,7 +655,7 @@ func printExportHelp() {
 	fmt.Print(`ktui export - export current Komari node status
 
 Usage:
-  ktui export <json|csv|markdown> [flags]
+  ktui export <markdown|csv|json> [flags]
 
 Flags:
   --url URL          Komari base URL
@@ -665,8 +665,8 @@ Flags:
   --config PATH     config file path
 
 Examples:
-  ktui export json
-  ktui export csv --output nodes.csv
   ktui export markdown -o report.md
+  ktui export csv --output nodes.csv
+  ktui export json
 `)
 }

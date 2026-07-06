@@ -36,7 +36,9 @@ func (a *App) render() {
 		bodyHeight = 1
 	}
 
-	if a.settings {
+	if a.about {
+		lines = append(lines, a.renderAboutBody(drawWidth, bodyHeight)...)
+	} else if a.settings {
 		lines = append(lines, a.renderSettingsBody(drawWidth, bodyHeight)...)
 	} else if a.detail {
 		lines = append(lines, a.renderDetailBody(drawWidth, bodyHeight)...)

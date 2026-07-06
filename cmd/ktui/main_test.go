@@ -48,11 +48,54 @@ func TestLooksLikeCommand(t *testing.T) {
 	if !looksLikeCommand("add") {
 		t.Fatal("add should look like a command")
 	}
-	if looksLikeCommand("--sheet") {
-		t.Fatal("--sheet should not look like a command")
+	if looksLikeCommand("--mode") {
+		t.Fatal("--mode should not look like a command")
 	}
 	if looksLikeCommand("") {
 		t.Fatal("empty string should not look like a command")
+	}
+}
+
+func TestHelpTextUsesRefactoredCommands(t *testing.T) {
+	for _, want := range []string{
+		"ktui status [flags]",
+		"ktui export <markdown|csv|json> [flags]",
+		"ktui update <check|install>",
+		"--mode MODE",
+		"ktui update check",
+		"ktui update install",
+	} {
+		if !strings.Contains(helpText, want) {
+			t.Fatalf("help text missing %q:\n%s", want, helpText)
+		}
+	}
+	for _, old := range []string{
+		"--once",
+		"--line",
+		"--sheet",
+		"ktui update --check",
+	} {
+		if strings.Contains(helpText, old) {
+			t.Fatalf("help text still contains old command %q:\n%s", old, helpText)
+		}
+	}
+}
+
+func TestParseModeFlag(t *testing.T) {
+	for _, value := range []string{"sheet", " line "} {
+		if _, err := parseModeFlag(value); err != nil {
+			t.Fatalf("parseModeFlag(%q) error = %v", value, err)
+		}
+	}
+	if _, err := parseModeFlag("grid"); err == nil {
+		t.Fatal("expected invalid mode to fail")
+	}
+}
+
+func TestHandleUpdateRejectsOldFlagSyntax(t *testing.T) {
+	err := handleUpdate([]string{"--check"})
+	if err == nil || !strings.Contains(err.Error(), "unknown update command") {
+		t.Fatalf("handleUpdate old syntax error = %v", err)
 	}
 }
 
@@ -64,6 +107,8 @@ func TestKeysHelpTextFormattingAndFooterActions(t *testing.T) {
 	for _, want := range []string{
 		"Footer click       back/tabs/window/scroll/settings/refresh",
 		"Footer click       back/previous/next/window/refresh",
+		"About:",
+		"?                  open about",
 		"url/api_key        shown as read-only",
 	} {
 		if !strings.Contains(help, want) {

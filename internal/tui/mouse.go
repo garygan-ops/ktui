@@ -32,6 +32,13 @@ func (a *App) handleMouseWheel(ctx context.Context, delta int) {
 	previous := a.selected
 	previousTab := a.tab
 	previousWindow := a.window
+	if a.about {
+		a.aboutScroll += delta * 3
+		if a.aboutScroll < 0 {
+			a.aboutScroll = 0
+		}
+		return
+	}
 	if a.settings {
 		a.moveSettingsSelection(delta)
 		return
@@ -58,6 +65,9 @@ func (a *App) handleMouseClick(ctx context.Context, x int, y int) {
 		return
 	}
 	if a.clickFooter(ctx, x, y) {
+		return
+	}
+	if a.about {
 		return
 	}
 	if a.settings {
@@ -115,6 +125,24 @@ func (a *App) clickFooter(ctx context.Context, x int, y int) bool {
 			return true
 		}
 		return false
+	}
+	if a.about {
+		switch action {
+		case footerBack:
+			a.closeAbout()
+		case footerScroll:
+			a.aboutScroll += 3
+		case footerRefresh:
+			a.requestFullRefresh()
+		case footerUpdate:
+			a.showUpdateHint()
+		default:
+			return false
+		}
+		if a.aboutScroll < 0 {
+			a.aboutScroll = 0
+		}
+		return true
 	}
 	if a.settings {
 		switch action {
@@ -304,12 +332,34 @@ func (a *App) closeSettings() {
 	a.settingsWasDetail = false
 }
 
+func (a *App) openAbout() {
+	a.aboutWasDetail = a.detail
+	a.aboutWasSettings = a.settings
+	a.aboutWasChart = a.chartFocus
+	a.about = true
+	a.aboutScroll = 0
+	a.settings = false
+	a.detail = false
+	a.chartFocus = false
+	a.notice = ""
+}
+
+func (a *App) closeAbout() {
+	a.about = false
+	a.detail = a.aboutWasDetail
+	a.settings = a.aboutWasSettings
+	a.chartFocus = a.aboutWasChart && a.detail
+	a.aboutWasDetail = false
+	a.aboutWasSettings = false
+	a.aboutWasChart = false
+}
+
 func (a *App) showUpdateHint() {
-	if !a.update.Available {
+	hint := a.updateHintText()
+	if hint == "" {
 		return
 	}
-	latest := valueOr(a.update.Latest, "latest")
-	a.notice = "update available: " + latest + "  quit and run `ktui update`"
+	a.notice = hint
 }
 
 func footerHit(footer string, label string, x int) bool {

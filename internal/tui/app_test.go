@@ -90,8 +90,58 @@ func TestUpdateAvailableFooterAndHint(t *testing.T) {
 	}
 
 	app.handleKey(context.Background(), keyEvent{name: "update-hint"})
-	if !strings.Contains(app.notice, "ktui update") {
-		t.Fatalf("notice = %q, want update command", app.notice)
+	if !strings.Contains(app.notice, "ktui update install") {
+		t.Fatalf("notice = %q, want update details", app.notice)
+	}
+}
+
+func TestKomariServerUpdateAvailableFooterAndHint(t *testing.T) {
+	app := NewWithOptions(nil, Options{})
+	app.komariUpdate.Available = true
+	app.komariUpdate.Current = "v1.2.3"
+	app.komariUpdate.Latest = "v1.2.5"
+	app.komariUpdate.ReleaseURL = "https://github.com/komari-monitor/komari/releases/tag/v1.2.5"
+
+	if !strings.Contains(app.footerText(), "u update") {
+		t.Fatalf("footer = %q, want update action", app.footerText())
+	}
+
+	app.handleKey(context.Background(), keyEvent{name: "update-hint"})
+	if !strings.Contains(app.notice, "Komari server: v1.2.3 -> v1.2.5") {
+		t.Fatalf("notice = %q, want Komari server update", app.notice)
+	}
+	if !strings.Contains(app.updateHeaderText(), "KOMARI UPDATE v1.2.5") {
+		t.Fatalf("header update = %q, want Komari update", app.updateHeaderText())
+	}
+}
+
+func TestMaybeStartKomariUpdateCheckUsesSnapshotVersion(t *testing.T) {
+	seenCurrent := make(chan string, 1)
+	app := NewWithOptions(nil, Options{
+		CheckKomariUpdate: func(ctx context.Context, currentVersion string) (KomariUpdateCheckResult, error) {
+			seenCurrent <- currentVersion
+			return KomariUpdateCheckResult{
+				CurrentVersion: currentVersion,
+				LatestVersion:  "v1.2.5",
+				ReleaseURL:     "https://github.com/komari-monitor/komari/releases/tag/v1.2.5",
+				ReleaseCount:   2,
+				Available:      true,
+			}, nil
+		},
+	})
+	app.snapshot.Version.Version = "v1.2.3"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app.maybeStartKomariUpdateCheck(ctx)
+	result := <-app.komariUpdateCh
+	app.applyKomariUpdateResult(result)
+
+	if got := <-seenCurrent; got != "v1.2.3" {
+		t.Fatalf("currentVersion = %q, want v1.2.3", got)
+	}
+	if !app.komariUpdate.Available || app.komariUpdate.Latest != "v1.2.5" || app.komariUpdate.ReleaseCount != 2 {
+		t.Fatalf("komariUpdate = %+v, want available v1.2.5", app.komariUpdate)
 	}
 }
 

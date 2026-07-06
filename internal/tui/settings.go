@@ -29,6 +29,7 @@ const (
 	settingsWarnRAM
 	settingsWarnDisk
 	settingsWarnExpiryDays
+	settingsAbout
 )
 
 func (a *App) renderSettingsBody(width int, bodyHeight int) []string {
@@ -95,6 +96,7 @@ func (a *App) settingsItems() []settingsItem {
 		{Label: "warn_ram", Value: percentSettingText(a.warnRAM), Kind: settingsWarnRAM},
 		{Label: "warn_disk", Value: percentSettingText(a.warnDisk), Kind: settingsWarnDisk},
 		{Label: "warn_expiry_days", Value: fmt.Sprintf("%d", a.warnExpiryDays), Kind: settingsWarnExpiryDays},
+		{Label: "about", Value: "open", Kind: settingsAbout},
 	}
 }
 
@@ -233,6 +235,9 @@ func (a *App) adjustSelectedSetting(delta int) {
 		a.warnDisk = adjustedPercent(a.warnDisk, delta)
 	case settingsWarnExpiryDays:
 		a.warnExpiryDays = adjustedExpiryDays(a.warnExpiryDays, delta)
+	case settingsAbout:
+		a.openAbout()
+		return
 	}
 	a.persistSettings()
 }

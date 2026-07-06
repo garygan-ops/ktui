@@ -36,50 +36,54 @@ func main() {
 			fatal(err)
 		}
 	}
-	if len(args) > 0 && (args[0] == "version" || args[0] == "--version" || args[0] == "-v") {
-		printVersion()
-		return
+	if err := handleCommand(args); err != nil {
+		fatal(err)
 	}
-	if len(args) > 0 && args[0] == "update" {
-		if err := handleUpdate(args[1:]); err != nil {
-			fatal(err)
-		}
-		return
-	}
-	if len(args) > 0 && args[0] == "config" {
-		if err := handleConfig(args[1:]); err != nil {
-			fatal(err)
-		}
-		return
-	}
-	if len(args) > 0 && args[0] == "export" {
-		if err := handleExport(args[1:]); err != nil {
-			fatal(err)
-		}
-		return
-	}
-	if len(args) > 0 && (args[0] == "help" || args[0] == "--help" || args[0] == "-h") {
-		if err := handleHelp(args[1:]); err != nil {
-			fatal(err)
-		}
-		return
-	}
-	if len(args) > 0 && looksLikeCommand(args[0]) {
-		usageError(fmt.Errorf("unknown command %q", args[0]))
-	}
+}
 
+func handleCommand(args []string) error {
+	if len(args) == 0 {
+		return handleTUI(args)
+	}
+	switch args[0] {
+	case "status":
+		return handleStatus(args[1:])
+	case "export":
+		return handleExport(args[1:])
+	case "config":
+		return handleConfig(args[1:])
+	case "update":
+		if err := handleUpdate(args[1:]); err != nil {
+			return err
+		}
+		return nil
+	case "version":
+		printVersion()
+		return nil
+	case "help":
+		return handleHelp(args[1:])
+	default:
+		if !looksLikeCommand(args[0]) {
+			return handleTUI(args)
+		}
+		usageError(fmt.Errorf("unknown command %q", args[0]))
+		return nil
+	}
+}
+
+func handleTUI(args []string) error {
 	cfg, cfgPath, err := loadEffectiveConfig()
 	if err != nil {
-		fatal(err)
+		return err
 	}
 
 	intervalDefault, err := cfg.IntervalDuration()
 	if err != nil {
-		fatal(err)
+		return err
 	}
 	timeoutDefault, err := cfg.TimeoutDuration()
 	if err != nil {
-		fatal(err)
+		return err
 	}
 
 	var (
@@ -89,99 +93,137 @@ func main() {
 		timeout        time.Duration
 		realtimePoints int
 		chartYAxis     string
-		once           bool
+		modeValue      string
 		ascii          bool
 		noColor        bool
-		lineMode       bool
-		sheetMode      bool
 	)
 
-	flags := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	flags := flag.NewFlagSet("ktui", flag.ExitOnError)
 	flags.StringVar(&baseURL, "url", cfg.URL, "Komari base URL")
 	flags.StringVar(&apiKey, "api-key", cfg.APIKey, "Komari API key (sent as Bearer token)")
 	flags.DurationVar(&interval, "interval", intervalDefault, "refresh interval")
 	flags.DurationVar(&timeout, "timeout", timeoutDefault, "HTTP timeout")
 	flags.IntVar(&realtimePoints, "realtime-points", cfg.RealtimePoints, "realtime chart sample limit, 0 auto")
 	flags.StringVar(&chartYAxis, "chart-y-axis", cfg.ChartYAxis, "percent chart Y axis mode: absolute or relative")
-	flags.BoolVar(&once, "once", false, "fetch once and print a summary without entering the TUI")
+	flags.StringVar(&modeValue, "mode", cfg.Mode, "view mode: sheet or line")
 	flags.BoolVar(&ascii, "ascii", cfg.ASCII, "use ASCII-only rendering for terminals/fonts with Unicode issues")
 	flags.BoolVar(&noColor, "no-color", cfg.NoColor, "disable ANSI color and inverse video")
-	flags.BoolVar(&lineMode, "line", false, "show servers as one-by-one line blocks")
-	flags.BoolVar(&sheetMode, "sheet", false, "show servers in the sheet/table layout")
 	flags.String("config", cfgPath, "config file path")
 	flags.Usage = printHelp
 	if err := flags.Parse(args); err != nil {
-		fatal(err)
+		return err
 	}
 	if flags.NArg() > 0 {
 		usageError(fmt.Errorf("unexpected argument %q", flags.Arg(0)))
 	}
 	if realtimePoints < 0 {
-		fatal(fmt.Errorf("--realtime-points must be 0 or a positive number"))
+		return fmt.Errorf("--realtime-points must be 0 or a positive number")
 	}
 	chartYAxis = strings.ToLower(strings.TrimSpace(chartYAxis))
 	if chartYAxis != "absolute" && chartYAxis != "relative" {
-		fatal(fmt.Errorf("--chart-y-axis must be absolute or relative"))
+		return fmt.Errorf("--chart-y-axis must be absolute or relative")
 	}
 
-	mode := tui.ModeSheet
-	if cfg.Mode == "line" {
-		mode = tui.ModeLine
-	}
-	if lineMode && sheetMode {
-		fatal(fmt.Errorf("--line and --sheet cannot be used together"))
-	}
-	if lineMode {
-		mode = tui.ModeLine
-	}
-	if sheetMode {
-		mode = tui.ModeSheet
+	mode, err := parseModeFlag(modeValue)
+	if err != nil {
+		return err
 	}
 	baseURL, apiKey, err = prepareConnectionConfig(cfg, baseURL, apiKey, os.Stdin, os.Stdout)
 	if err != nil {
-		fatal(err)
+		return err
 	}
 
 	client, err := komari.NewClientWithOptions(baseURL, komari.Options{APIKey: apiKey, Timeout: timeout})
 	if err != nil {
-		fatal(err)
-	}
-
-	if once {
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		defer cancel()
-		snapshot, err := client.Snapshot(ctx)
-		if err != nil {
-			fatal(err)
-		}
-		printSummary(snapshot)
-		return
+		return err
 	}
 
 	if err := checkSystemClockBeforeTUI(client, timeout); err != nil {
-		fatal(err)
+		return err
 	}
 
 	app := tui.NewWithOptions(client, tui.Options{
-		URL:             baseURL,
-		APIKey:          apiKey,
-		RefreshInterval: interval,
-		FetchTimeout:    timeout,
-		DetailTimeout:   timeout,
-		RealtimePoints:  realtimePoints,
-		ChartYAxisMode:  chartYAxis,
-		WarnCPU:         cfg.WarnCPU,
-		WarnRAM:         cfg.WarnRAM,
-		WarnDisk:        cfg.WarnDisk,
-		WarnExpiryDays:  cfg.WarnExpiryDays,
-		SaveSettings:    saveTUISettings,
-		CheckUpdate:     checkSoftwareUpdate,
-		ASCII:           ascii,
-		NoColor:         noColor,
-		Mode:            mode,
+		URL:               baseURL,
+		APIKey:            apiKey,
+		RefreshInterval:   interval,
+		FetchTimeout:      timeout,
+		DetailTimeout:     timeout,
+		RealtimePoints:    realtimePoints,
+		ChartYAxisMode:    chartYAxis,
+		WarnCPU:           cfg.WarnCPU,
+		WarnRAM:           cfg.WarnRAM,
+		WarnDisk:          cfg.WarnDisk,
+		WarnExpiryDays:    cfg.WarnExpiryDays,
+		SaveSettings:      saveTUISettings,
+		CheckUpdate:       checkSoftwareUpdate,
+		CheckKomariUpdate: checkKomariServerUpdate,
+		Version:           version,
+		Commit:            commit,
+		BuildDate:         date,
+		ASCII:             ascii,
+		NoColor:           noColor,
+		Mode:              mode,
 	})
 	if err := app.Run(context.Background()); err != nil && err != context.Canceled {
-		fatal(err)
+		return err
+	}
+	return nil
+}
+
+func handleStatus(args []string) error {
+	cfg, cfgPath, err := loadEffectiveConfig()
+	if err != nil {
+		return err
+	}
+	timeoutDefault, err := cfg.TimeoutDuration()
+	if err != nil {
+		return err
+	}
+
+	var (
+		baseURL string
+		apiKey  string
+		timeout time.Duration
+	)
+	fs := flag.NewFlagSet("ktui status", flag.ExitOnError)
+	fs.StringVar(&baseURL, "url", cfg.URL, "Komari base URL")
+	fs.StringVar(&apiKey, "api-key", cfg.APIKey, "Komari API key (sent as Bearer token)")
+	fs.DurationVar(&timeout, "timeout", timeoutDefault, "HTTP timeout")
+	fs.String("config", cfgPath, "config file path")
+	fs.Usage = printStatusHelp
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected status argument %q", fs.Arg(0))
+	}
+
+	baseURL, apiKey, err = prepareConnectionConfig(cfg, baseURL, apiKey, os.Stdin, os.Stdout)
+	if err != nil {
+		return err
+	}
+	client, err := komari.NewClientWithOptions(baseURL, komari.Options{APIKey: apiKey, Timeout: timeout})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	snapshot, err := client.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	printSummary(snapshot)
+	return nil
+}
+
+func parseModeFlag(value string) (tui.Mode, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "sheet":
+		return tui.ModeSheet, nil
+	case "line":
+		return tui.ModeLine, nil
+	default:
+		return "", fmt.Errorf("--mode must be sheet or line")
 	}
 }
 
@@ -429,6 +471,23 @@ func checkSoftwareUpdate(ctx context.Context) (tui.UpdateCheckResult, error) {
 	}, nil
 }
 
+func checkKomariServerUpdate(ctx context.Context, currentVersion string) (tui.KomariUpdateCheckResult, error) {
+	result, err := komari.CheckServerUpdate(ctx, komari.ServerUpdateOptions{
+		CurrentVersion: currentVersion,
+		Timeout:        8 * time.Second,
+	})
+	if err != nil {
+		return tui.KomariUpdateCheckResult{}, err
+	}
+	return tui.KomariUpdateCheckResult{
+		CurrentVersion: result.CurrentVersion,
+		LatestVersion:  result.LatestVersion,
+		ReleaseURL:     result.ReleaseURL,
+		ReleaseCount:   result.ReleaseCount,
+		Available:      result.Available,
+	}, nil
+}
+
 func handleConfig(args []string) error {
 	if len(args) == 0 {
 		printConfigHelp()
@@ -506,13 +565,15 @@ func handleConfig(args []string) error {
 
 func handleHelp(args []string) error {
 	if len(args) > 1 {
-		return fmt.Errorf("usage: ktui help [config|keys|update|export]")
+		return fmt.Errorf("usage: ktui help [status|config|keys|update|export]")
 	}
 	if len(args) == 0 {
 		printHelp()
 		return nil
 	}
 	switch args[0] {
+	case "status":
+		printStatusHelp()
 	case "config":
 		printConfigHelp()
 	case "keys":
@@ -528,11 +589,28 @@ func handleHelp(args []string) error {
 }
 
 func handleUpdate(args []string) error {
-	fs := flag.NewFlagSet("ktui update", flag.ExitOnError)
-	checkOnly := fs.Bool("check", false, "check whether an update is available without installing it")
-	targetTag := fs.String("tag", "", "install a specific release tag instead of the latest release")
+	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+		printUpdateHelp()
+		return nil
+	}
+	switch args[0] {
+	case "check":
+		return runUpdateCommand("check", args[1:], true)
+	case "install":
+		return runUpdateCommand("install", args[1:], false)
+	default:
+		return fmt.Errorf("unknown update command %q", args[0])
+	}
+}
+
+func runUpdateCommand(name string, args []string, checkOnly bool) error {
+	fs := flag.NewFlagSet("ktui update "+name, flag.ExitOnError)
+	targetTag := ""
 	apiURL := fs.String("api-url", update.DefaultAPIBaseURL, "Gitea repository API URL")
 	timeout := fs.Duration("timeout", 60*time.Second, "update HTTP timeout")
+	if !checkOnly {
+		fs.StringVar(&targetTag, "tag", "", "install a specific release tag instead of the latest release")
+	}
 	fs.Usage = printUpdateHelp
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -543,8 +621,8 @@ func handleUpdate(args []string) error {
 	return update.Run(context.Background(), update.Options{
 		APIBaseURL:     *apiURL,
 		CurrentVersion: version,
-		TargetVersion:  *targetTag,
-		CheckOnly:      *checkOnly,
+		TargetVersion:  targetTag,
+		CheckOnly:      checkOnly,
 		Timeout:        *timeout,
 		Stdout:         os.Stdout,
 	})
@@ -558,34 +636,37 @@ const helpText = `ktui - Komari terminal UI
 
 Usage:
   ktui [flags]
+  ktui status [flags]
+  ktui export <markdown|csv|json> [flags]
+  ktui config <init|path|show|set|help>
+  ktui update <check|install>
   ktui version
-  ktui update [--check] [--tag v0.1.0]
-  ktui export <json|csv|markdown> [--output PATH]
-  ktui config <path|init|show|set|help>
-  ktui help [config|keys|update|export]
+  ktui help [status|config|keys|update|export]
 
-Flags:
+Connection flags:
   --url URL          Komari base URL
   --api-key KEY     Komari API key, sent as a Bearer token
-  --interval 5s     refresh interval
   --timeout 10s     HTTP timeout
+  --config PATH     config file path
+
+TUI flags:
+  --interval 5s     refresh interval
+  --mode MODE       view mode: sheet or line
   --realtime-points N
                    realtime chart sample limit, 0 auto
   --chart-y-axis MODE
                    percent chart Y axis mode: absolute or relative
-  --sheet           show the boxed sheet layout
-  --line            show one server block after another
   --ascii           use ASCII-only rendering
   --no-color        disable ANSI color
-  --once            fetch once and print a summary
-  --config PATH     config file path
 
 Examples:
   ktui
-  ktui --sheet
-  ktui --line --ascii --no-color
+  ktui --mode sheet
+  ktui --mode line --ascii --no-color
+  ktui status
   ktui version
-  ktui update --check
+  ktui update check
+  ktui update install
   ktui export markdown
   ktui export csv --output nodes.csv
   ktui config init
@@ -599,28 +680,48 @@ func printVersion() {
 	fmt.Printf("built:  %s\n", date)
 }
 
+func printStatusHelp() {
+	fmt.Print(`ktui status - fetch once and print a node summary
+
+Usage:
+  ktui status [flags]
+
+Flags:
+  --url URL          Komari base URL
+  --api-key KEY     Komari API key, sent as a Bearer token
+  --timeout 10s     HTTP timeout
+  --config PATH     config file path
+
+Examples:
+  ktui status
+  ktui status --url https://komari.example.com
+`)
+}
+
 func printUpdateHelp() {
 	fmt.Printf(`ktui update - update ktui from Gitea Releases
 
 Usage:
-  ktui update [flags]
+  ktui update check [flags]
+  ktui update install [flags]
 
 Flags:
-  --check          check for an update without installing it
-  --tag TAG        install a specific release tag, for example v0.1.0
   --api-url URL    Gitea repository API URL
   --timeout 60s    HTTP timeout
+
+Install flags:
+  --tag TAG        install a specific release tag, for example v0.1.0
 
 Default API URL:
   %s
 
 Examples:
-  ktui update --check
-  ktui update
-  ktui update --tag v0.1.0
+  ktui update check
+  ktui update install
+  ktui update install --tag v0.1.0
 
 Private repositories:
-  KTUI_UPDATE_TOKEN=your_token ktui update
+  KTUI_UPDATE_TOKEN=your_token ktui update install
 `, update.DefaultAPIBaseURL)
 }
 
@@ -652,14 +753,14 @@ Keys:
   timeout   HTTP timeout, for example 10s
   realtime-points
             realtime chart sample limit, 0 auto
-	  chart-y-axis
-	            percent chart Y axis mode: absolute or relative
-	  warn-cpu  CPU warning threshold percent, for example 90
-	  warn-ram  RAM warning threshold percent, for example 85
-	  warn-disk Disk warning threshold percent, for example 90
-	  warn-expiry-days
-	            expiry warning window in days
-	  mode      sheet or line
+  chart-y-axis
+            percent chart Y axis mode: absolute or relative
+  warn-cpu  CPU warning threshold percent, for example 90
+  warn-ram  RAM warning threshold percent, for example 85
+  warn-disk Disk warning threshold percent, for example 90
+  warn-expiry-days
+            expiry warning window in days
+  mode      sheet or line
   ascii     true or false
   no-color  true or false
 
@@ -690,7 +791,8 @@ List layer:
   r                  refresh now
   d                  open or reload selected server detail data
   a                  toggle ASCII compatibility mode
-  u                  show update command when an update is available
+  ?                  open about
+  u                  show available update details
   q, Ctrl-C          quit
 
 Detail layer:
@@ -705,7 +807,8 @@ Detail layer:
   Mouse click        switch tabs or time window
   Footer click       back/tabs/window/scroll/settings/refresh
   s                  open settings
-  u                  show update command when an update is available
+  ?                  open about
+  u                  show available update details
   PgUp, PgDn         scroll faster
 
 Chart focus:
@@ -721,7 +824,15 @@ Settings layer:
   Footer click       back/adjust/toggle
   Left/h, Right/l    adjust value
   Enter              toggle or advance value
+  ?                  open about
   url/api_key        shown as read-only
+
+About:
+  Esc, q, ?          return to previous layer
+  Up/k, Down/j       scroll
+  PgUp, PgDn         scroll faster
+  r                  refresh now
+  u                  show available update details
 
 Search:
   Type text          match node name, region, tags, group, IP, OS, UUID
