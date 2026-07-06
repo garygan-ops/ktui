@@ -21,20 +21,40 @@ func (a *App) writeFrame(b *strings.Builder, width int, height int, lines []stri
 	if width <= 0 || height <= 0 {
 		return
 	}
+	frame := normalizedFrameLines(width, height, lines)
+	fullRedraw := a.frameWidth != width || a.frameHeight != height || len(a.frameCache) != height
+	if fullRedraw {
+		b.WriteString("\x1b[2J")
+	}
+
+	for row, line := range frame {
+		if !fullRedraw && a.frameCache[row] == line {
+			continue
+		}
+		b.WriteString(fmt.Sprintf("\x1b[%d;1H", row+1))
+		b.WriteString(line)
+		b.WriteString("\x1b[K")
+	}
+
+	a.frameCache = frame
+	a.frameWidth = width
+	a.frameHeight = height
+}
+
+func normalizedFrameLines(width int, height int, lines []string) []string {
 	drawWidth := width
 	if drawWidth > 1 {
 		drawWidth--
 	}
-	b.WriteString("\x1b[2J")
+	frame := make([]string, 0, height)
 	for row := 0; row < height; row++ {
 		line := ""
 		if row < len(lines) {
 			line = lines[row]
 		}
-		b.WriteString(fmt.Sprintf("\x1b[%d;1H", row+1))
-		b.WriteString(fitLine(line, drawWidth))
-		b.WriteString("\x1b[K")
+		frame = append(frame, fitLine(line, drawWidth))
 	}
+	return frame
 }
 
 func (a *App) headerLines(width int) []string {
@@ -377,20 +397,20 @@ func (a *App) footerVariantForWidth(width int) int {
 }
 
 func (a *App) adjustScroll(visibleRows int) {
-	if a.selected < a.scroll {
-		a.scroll = a.selected
+	if a.selected < a.listScroll {
+		a.listScroll = a.selected
 	}
-	if a.selected >= a.scroll+visibleRows {
-		a.scroll = a.selected - visibleRows + 1
+	if a.selected >= a.listScroll+visibleRows {
+		a.listScroll = a.selected - visibleRows + 1
 	}
-	if a.scroll < 0 {
-		a.scroll = 0
+	if a.listScroll < 0 {
+		a.listScroll = 0
 	}
 	maxScroll := len(a.viewNodes()) - visibleRows
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
-	if a.scroll > maxScroll {
-		a.scroll = maxScroll
+	if a.listScroll > maxScroll {
+		a.listScroll = maxScroll
 	}
 }

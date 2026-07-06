@@ -7,9 +7,10 @@ import (
 )
 
 type settingsItem struct {
-	Label string
-	Value string
-	Kind  settingsItemKind
+	Label    string
+	Value    string
+	Kind     settingsItemKind
+	ReadOnly bool
 }
 
 type settingsItemKind int
@@ -35,36 +36,54 @@ func (a *App) renderSettingsBody(width int, bodyHeight int) []string {
 	if len(items) == 0 {
 		return fillBody([]string{" No settings"}, width, bodyHeight)
 	}
-	if a.settingsSelected < 0 {
-		a.settingsSelected = 0
-	}
-	if a.settingsSelected >= len(items) {
-		a.settingsSelected = len(items) - 1
-	}
+	a.clampSettingsSelection(len(items))
 
 	lines := make([]string, 0, bodyHeight)
 	lines = append(lines, "")
 	if a.settingsStatus != "" {
 		lines = append(lines, " "+a.settingsStatus)
 	}
-	for i, item := range items {
+	if len(lines) > bodyHeight {
+		return fillBody(lines[:max(0, bodyHeight)], width, bodyHeight)
+	}
+
+	visibleRows := bodyHeight - len(lines)
+	if visibleRows <= 0 {
+		return fillBody(lines, width, bodyHeight)
+	}
+	a.adjustSettingsScroll(visibleRows, len(items))
+
+	end := min(len(items), a.settingsScroll+visibleRows)
+	for i := a.settingsScroll; i < end; i++ {
+		item := items[i]
 		prefix := " "
 		if i == a.settingsSelected {
 			prefix = ">"
 		}
-		line := fmt.Sprintf(" %s %-22s %s", prefix, item.Label, item.Value)
+		value := item.Value
+		if item.ReadOnly {
+			value = value + "  read only"
+		}
+		line := fmt.Sprintf(" %s %-22s %s", prefix, item.Label, value)
 		if i == a.settingsSelected {
 			line = a.style.inverse(cleanLine(line, width))
 		}
 		lines = append(lines, fitLine(line, width))
 	}
-	return fillBody(lines, width, bodyHeight)
+	lines = fillBody(lines, width, bodyHeight)
+	return a.withScrollIndicator(lines, width, scrollIndicator{
+		Start:   a.settingsChromeRows(),
+		Height:  visibleRows,
+		Offset:  a.settingsScroll,
+		Visible: visibleRows,
+		Total:   len(items),
+	})
 }
 
 func (a *App) settingsItems() []settingsItem {
 	return []settingsItem{
-		{Label: "url", Value: valueOr(a.settingsURL, "-"), Kind: settingsURL},
-		{Label: "api_key", Value: maskedValue(a.settingsAPIKey), Kind: settingsAPIKey},
+		{Label: "url", Value: valueOr(a.settingsURL, "-"), Kind: settingsURL, ReadOnly: true},
+		{Label: "api_key", Value: maskedValue(a.settingsAPIKey), Kind: settingsAPIKey, ReadOnly: true},
 		{Label: "interval", Value: a.refreshInterval.String(), Kind: settingsInterval},
 		{Label: "timeout", Value: a.fetchTimeout.String(), Kind: settingsTimeout},
 		{Label: "mode", Value: string(a.mode), Kind: settingsMode},
@@ -97,19 +116,67 @@ func (a *App) settingsCount() int {
 	return len(a.settingsItems())
 }
 
-func (a *App) moveSettingsSelection(delta int) {
-	count := a.settingsCount()
-	if count == 0 {
+func (a *App) settingsChromeRows() int {
+	rows := 1
+	if a.settingsStatus != "" {
+		rows++
+	}
+	return rows
+}
+
+func (a *App) clampSettingsSelection(count int) {
+	if count <= 0 {
 		a.settingsSelected = 0
+		a.settingsScroll = 0
 		return
 	}
-	a.settingsSelected += delta
 	if a.settingsSelected < 0 {
 		a.settingsSelected = 0
 	}
 	if a.settingsSelected >= count {
 		a.settingsSelected = count - 1
 	}
+	if a.settingsScroll < 0 {
+		a.settingsScroll = 0
+	}
+	if a.settingsScroll >= count {
+		a.settingsScroll = count - 1
+	}
+}
+
+func (a *App) adjustSettingsScroll(visibleRows int, count int) {
+	a.clampSettingsSelection(count)
+	if visibleRows <= 0 || count <= 0 {
+		a.settingsScroll = 0
+		return
+	}
+	if a.settingsSelected < a.settingsScroll {
+		a.settingsScroll = a.settingsSelected
+	}
+	if a.settingsSelected >= a.settingsScroll+visibleRows {
+		a.settingsScroll = a.settingsSelected - visibleRows + 1
+	}
+	maxScroll := count - visibleRows
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if a.settingsScroll > maxScroll {
+		a.settingsScroll = maxScroll
+	}
+	if a.settingsScroll < 0 {
+		a.settingsScroll = 0
+	}
+}
+
+func (a *App) moveSettingsSelection(delta int) {
+	count := a.settingsCount()
+	if count == 0 {
+		a.settingsSelected = 0
+		a.settingsScroll = 0
+		return
+	}
+	a.settingsSelected += delta
+	a.clampSettingsSelection(count)
 }
 
 func (a *App) adjustSelectedSetting(delta int) {

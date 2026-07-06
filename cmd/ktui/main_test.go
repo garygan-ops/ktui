@@ -56,6 +56,22 @@ func TestLooksLikeCommand(t *testing.T) {
 	}
 }
 
+func TestKeysHelpTextFormattingAndFooterActions(t *testing.T) {
+	help := keysHelpText()
+	if strings.Contains(help, "\t") {
+		t.Fatalf("keys help should not contain tab indentation: %q", help)
+	}
+	for _, want := range []string{
+		"Footer click       back/tabs/window/scroll/settings/refresh",
+		"Footer click       back/previous/next/window/refresh",
+		"url/api_key        shown as read-only",
+	} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("keys help missing %q:\n%s", want, help)
+		}
+	}
+}
+
 func TestCheckSystemClockRejectsLargeSkew(t *testing.T) {
 	now := time.Date(2026, 7, 4, 12, 30, 0, 0, time.UTC)
 	err := checkSystemClock(context.Background(), fakeServerTimeSource{time: now.Add(-time.Minute)}, func() time.Time {

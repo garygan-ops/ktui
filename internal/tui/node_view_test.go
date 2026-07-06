@@ -139,6 +139,54 @@ func TestNodeSorts(t *testing.T) {
 	}
 }
 
+func TestViewNodesCacheReusesFilteredSortedNodes(t *testing.T) {
+	app := testNodeViewApp()
+	app.nodeSort = nodeSortCPU
+
+	first := app.viewNodes()
+	second := app.viewNodes()
+
+	if !app.viewCache.Valid {
+		t.Fatal("view node cache should be populated")
+	}
+	if len(first) == 0 || len(second) == 0 {
+		t.Fatalf("view nodes = %d/%d, want non-empty", len(first), len(second))
+	}
+	if &first[0] != &second[0] {
+		t.Fatal("repeated viewNodes call should reuse cached backing slice")
+	}
+	if first[0].UUID != "n3" {
+		t.Fatalf("cached CPU sort first = %s, want n3", first[0].UUID)
+	}
+}
+
+func TestViewNodesCacheInvalidatesWhenQueryOrSortChanges(t *testing.T) {
+	app := testNodeViewApp()
+	first := app.viewNodes()
+	if len(first) != 3 {
+		t.Fatalf("initial nodes = %d, want 3", len(first))
+	}
+
+	app.searchQuery = "beta"
+	filtered := app.viewNodes()
+	if len(filtered) != 1 || filtered[0].UUID != "n2" {
+		t.Fatalf("filtered nodes = %#v, want n2", filtered)
+	}
+	if app.viewCache.Key.Query != "beta" {
+		t.Fatalf("cache query = %q, want beta", app.viewCache.Key.Query)
+	}
+
+	app.searchQuery = ""
+	app.nodeSort = nodeSortCPU
+	sorted := app.viewNodes()
+	if len(sorted) != 3 || sorted[0].UUID != "n3" {
+		t.Fatalf("sorted nodes = %#v, want n3 first", sorted)
+	}
+	if app.viewCache.Key.Sort != nodeSortCPU {
+		t.Fatalf("cache sort = %q, want cpu", app.viewCache.Key.Sort)
+	}
+}
+
 func TestSearchEditingTreatsCommandKeysAsText(t *testing.T) {
 	app := testNodeViewApp()
 
@@ -174,6 +222,29 @@ func TestSearchEditingRendersVisibleInputLine(t *testing.T) {
 	lines = app.renderListBody(80, 8)
 	if !strings.Contains(lines[0], "Search") || !strings.Contains(lines[0], "alpha") {
 		t.Fatalf("active search line = %q, want visible applied search", lines[0])
+	}
+}
+
+func TestSearchCancelRestoresOriginalSelectionAfterNoMatches(t *testing.T) {
+	app := testNodeViewApp()
+	app.selected = 1
+
+	app.handleKey(context.Background(), keyEvent{name: "search", text: "/"})
+	app.handleKey(context.Background(), keyEvent{name: "char", text: "zzzz"})
+	if len(app.viewNodes()) != 0 {
+		t.Fatalf("visible nodes = %d, want no matches", len(app.viewNodes()))
+	}
+
+	app.handleKey(context.Background(), keyEvent{name: "back"})
+	if app.searchEditing {
+		t.Fatal("search should be canceled")
+	}
+	if app.searchQuery != "" {
+		t.Fatalf("searchQuery = %q, want unchanged empty query", app.searchQuery)
+	}
+	node, ok := app.selectedNode()
+	if !ok || node.UUID != "n2" {
+		t.Fatalf("selected node = %#v ok=%t, want n2", node, ok)
 	}
 }
 

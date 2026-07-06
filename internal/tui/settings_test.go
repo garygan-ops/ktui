@@ -44,6 +44,23 @@ func TestSettingsItemsIncludeAllConfigFields(t *testing.T) {
 	if items[0].Value != "https://komari.example.com" || items[1].Value != "********" {
 		t.Fatalf("URL/API display = %q/%q", items[0].Value, items[1].Value)
 	}
+	if !items[0].ReadOnly || !items[1].ReadOnly {
+		t.Fatalf("URL/API should be marked read-only: %#v %#v", items[0], items[1])
+	}
+}
+
+func TestSettingsReadOnlyItemsRenderAffordance(t *testing.T) {
+	app := NewWithOptions(nil, Options{
+		URL:    "https://komari.example.com",
+		APIKey: "secret",
+		ASCII:  true,
+	})
+
+	lines := app.renderSettingsBody(100, 18)
+	joined := strings.Join(lines, "\n")
+	if strings.Count(joined, "read only") < 2 {
+		t.Fatalf("settings body should mark URL and API key read-only: %#v", lines)
+	}
 }
 
 func selectSetting(t *testing.T, app *App, label string) {
@@ -143,9 +160,39 @@ func TestSettingsBodyContainsCoreEditableItems(t *testing.T) {
 	}
 }
 
+func TestSettingsBodyScrollsSelectedItemIntoView(t *testing.T) {
+	app := NewWithOptions(nil, Options{ASCII: true, NoColor: true})
+	selectSetting(t, app, "warn_expiry_days")
+
+	lines := app.renderSettingsBody(80, 5)
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "warn_expiry_days") {
+		t.Fatalf("settings body did not scroll selected item into view: %#v", lines)
+	}
+	if app.settingsScroll == 0 {
+		t.Fatal("settingsScroll should move when selected item is below the visible area")
+	}
+	if !strings.HasSuffix(lines[1], "^") {
+		t.Fatalf("first visible settings row = %q, want up scroll indicator", lines[1])
+	}
+}
+
+func TestSettingsClickUsesSettingsScrollOffset(t *testing.T) {
+	app := NewWithOptions(nil, Options{ASCII: true, NoColor: true})
+	selectSetting(t, app, "warn_expiry_days")
+	app.renderSettingsBody(80, 5)
+
+	scroll := app.settingsScroll
+	app.selectSettingsAtBodyRow(app.settingsChromeRows(), 5)
+	if app.settingsSelected != scroll {
+		t.Fatalf("settingsSelected = %d, want first visible item index %d", app.settingsSelected, scroll)
+	}
+}
+
 func TestSettingsBackRestoresDetailLayer(t *testing.T) {
 	app := NewWithOptions(nil, Options{})
 	app.detail = true
+	app.detailScroll = 14
 
 	app.handleKey(context.Background(), keyEvent{name: "settings"})
 	if !app.settings || app.detail {
@@ -155,6 +202,9 @@ func TestSettingsBackRestoresDetailLayer(t *testing.T) {
 	app.handleSettingsKey(keyEvent{name: "back"})
 	if app.settings || !app.detail {
 		t.Fatalf("settings=%t detail=%t, want settings closed and detail restored", app.settings, app.detail)
+	}
+	if app.detailScroll != 14 {
+		t.Fatalf("detailScroll = %d, want preserved 14", app.detailScroll)
 	}
 }
 

@@ -3,6 +3,9 @@ package tui
 import (
 	"context"
 	"strings"
+	"time"
+
+	"ktui/internal/komari"
 )
 
 const (
@@ -34,9 +37,9 @@ func (a *App) handleMouseWheel(ctx context.Context, delta int) {
 		return
 	}
 	if a.detail {
-		a.scroll += delta * a.detailScrollStep()
-		if a.scroll < 0 {
-			a.scroll = 0
+		a.detailScroll += delta * a.detailScrollStep()
+		if a.detailScroll < 0 {
+			a.detailScroll = 0
 		}
 		if previous != a.selected || previousTab != a.tab || previousWindow != a.window || a.tabNeedsDetail() {
 			a.ensureSelectedDetail(ctx)
@@ -108,8 +111,7 @@ func (a *App) clickFooter(ctx context.Context, x int, y int) bool {
 	action := a.footerActionAt(x, drawWidth)
 	if a.searchEditing {
 		if action == footerBack {
-			a.searchDraft = a.searchQuery
-			a.searchEditing = false
+			a.cancelSearch()
 			return true
 		}
 		return false
@@ -132,12 +134,17 @@ func (a *App) clickFooter(ctx context.Context, x int, y int) bool {
 				a.closeChartFocus()
 			} else {
 				a.detail = false
-				a.scroll = 0
 			}
 		case footerPrevChart:
 			a.moveChartFocus(-1)
 		case footerNextChart:
 			a.moveChartFocus(1)
+		case footerTabs:
+			a.cycleDetailTab(ctx, 1)
+		case footerWindow:
+			a.cycleDetailWindow(ctx, 1)
+		case footerScroll:
+			a.detailScroll += a.detailScrollStep()
 		case footerSettings:
 			a.openSettings()
 		case footerRefresh:
@@ -184,14 +191,26 @@ func (a *App) clickFooter(ctx context.Context, x int, y int) bool {
 }
 
 func (a *App) clickSettings(y int) {
+	_, height := terminalSize()
+	bodyHeight := height - mouseHeaderRows - 1
+	if bodyHeight < 1 {
+		bodyHeight = 1
+	}
 	bodyRow := y - mouseHeaderRows - 1
+	a.selectSettingsAtBodyRow(bodyRow, bodyHeight)
+}
+
+func (a *App) selectSettingsAtBodyRow(bodyRow int, bodyHeight int) {
 	if bodyRow < 0 {
 		return
 	}
-	itemRow := bodyRow - 1
-	if a.settingsStatus != "" {
-		itemRow--
+	chromeRows := a.settingsChromeRows()
+	visibleRows := bodyHeight - chromeRows
+	if bodyRow < chromeRows || visibleRows <= 0 {
+		return
 	}
+	a.adjustSettingsScroll(visibleRows, a.settingsCount())
+	itemRow := a.settingsScroll + bodyRow - chromeRows
 	if itemRow < 0 || itemRow >= a.settingsCount() {
 		return
 	}
@@ -204,7 +223,7 @@ func (a *App) clickLine(ctx context.Context, y int) {
 	if row < 0 {
 		return
 	}
-	index := a.scroll + row
+	index := a.listScroll + row
 	if index >= 0 && index < len(a.viewNodes()) {
 		a.selected = index
 		a.clampSelection()
@@ -246,7 +265,7 @@ func (a *App) clickSheet(ctx context.Context, x int, y int) {
 	if row >= rowsVisible {
 		return
 	}
-	index := (a.scroll+row)*columns + col
+	index := (a.listScroll+row)*columns + col
 	if index >= 0 && index < len(a.viewNodes()) {
 		a.selected = index
 		a.clampSelection()
@@ -259,7 +278,7 @@ func (a *App) openSelectedDetail(ctx context.Context) {
 		return
 	}
 	a.detail = true
-	a.scroll = 0
+	a.detailScroll = 0
 	a.ensureSelectedDetail(ctx)
 }
 
@@ -269,7 +288,6 @@ func (a *App) clickDetailBack(x int, y int) bool {
 		return false
 	}
 	a.detail = false
-	a.scroll = 0
 	return true
 }
 
@@ -278,14 +296,12 @@ func (a *App) openSettings() {
 	a.settings = true
 	a.detail = false
 	a.closeChartFocus()
-	a.scroll = 0
 }
 
 func (a *App) closeSettings() {
 	a.settings = false
 	a.detail = a.settingsWasDetail
 	a.settingsWasDetail = false
-	a.scroll = 0
 }
 
 func (a *App) showUpdateHint() {
@@ -312,20 +328,27 @@ func footerLabelBounds(footer string, label string) (int, int, bool) {
 }
 
 func (a *App) clickDetailChrome(ctx context.Context, x int, y int) {
+	node, ok := a.selectedNode()
+	if !ok {
+		return
+	}
+	st := a.snapshot.Status[node.UUID]
+	_, bodyHeight := detailMouseBody()
+	layout := a.detailChromeMouseLayout(node, st, bodyHeight)
 	bodyRow := y - mouseHeaderRows - 1
 	switch bodyRow {
-	case 2:
+	case layout.TabRow:
 		if tab, ok := hitDetailTab(x); ok {
 			a.tab = tab
-			a.scroll = 0
+			a.detailScroll = 0
 			if a.tabNeedsDetail() {
 				a.ensureSelectedDetail(ctx)
 			}
 		}
-	case 3:
+	case layout.WindowRow:
 		if window, ok := hitDetailWindow(x); ok {
 			a.window = window
-			a.scroll = 0
+			a.detailScroll = 0
 			a.ensureSelectedDetail(ctx)
 		}
 	}
@@ -343,17 +366,19 @@ func (a *App) chartIndexAt(x int, y int) (int, bool) {
 	if len(a.viewNodes()) == 0 {
 		return 0, false
 	}
-	width, height := terminalSize()
+	width, bodyHeight := detailMouseBody()
 	drawWidth := width
 	if drawWidth > 1 {
 		drawWidth--
 	}
-	bodyHeight := height - mouseHeaderRows - 1
-	if bodyHeight < 1 {
-		bodyHeight = 1
+	bodyRow := y - mouseHeaderRows - 1
+	node, ok := a.selectedNode()
+	if !ok {
+		return 0, false
 	}
-	chromeRows := 4
-	contentHeight := bodyHeight - chromeRows
+	st := a.snapshot.Status[node.UUID]
+	layout := a.detailChromeMouseLayout(node, st, bodyHeight)
+	contentHeight := bodyHeight - layout.Rows
 	if contentHeight < 1 {
 		return 0, false
 	}
@@ -361,12 +386,11 @@ func (a *App) chartIndexAt(x int, y int) (int, bool) {
 	if contentHeight >= cardHeight {
 		contentHeight = contentHeight / cardHeight * cardHeight
 	}
-	bodyRow := y - mouseHeaderRows - 1
-	contentRow := bodyRow - chromeRows
+	contentRow := bodyRow - layout.Rows
 	if contentRow < 0 || contentRow >= contentHeight {
 		return 0, false
 	}
-	contentRow += a.scroll
+	contentRow += a.detailScroll
 	columns, cardWidth := detailGridLayout(drawWidth, detailGridColumns(drawWidth))
 	row := contentRow / cardHeight
 	lineInCard := contentRow % cardHeight
@@ -383,11 +407,6 @@ func (a *App) chartIndexAt(x int, y int) (int, bool) {
 		return 0, false
 	}
 	sectionIndex := row*columns + col
-	node, ok := a.selectedNode()
-	if !ok {
-		return 0, false
-	}
-	st := a.snapshot.Status[node.UUID]
 	sections := a.detailSections(node, st)
 	if sectionIndex < 0 || sectionIndex >= len(sections) || sections[sectionIndex].Chart == nil {
 		return 0, false
@@ -399,6 +418,40 @@ func (a *App) chartIndexAt(x int, y int) (int, bool) {
 		}
 	}
 	return chartIndex, true
+}
+
+type detailChromeMouseLayout struct {
+	Rows      int
+	TabRow    int
+	WindowRow int
+}
+
+func detailMouseBody() (int, int) {
+	width, height := terminalSize()
+	bodyHeight := height - mouseHeaderRows - 1
+	if bodyHeight < 1 {
+		bodyHeight = 1
+	}
+	return width, bodyHeight
+}
+
+func (a *App) detailChromeMouseLayout(node komari.Node, st komari.Status, bodyHeight int) detailChromeMouseLayout {
+	tabRow := 2
+	if len(a.alertForNode(node, st, time.Now()).Reasons) > 0 {
+		tabRow++
+	}
+	windowRow := tabRow + 1
+	rows := windowRow + 1
+	if bodyHeight > 0 && rows > bodyHeight-1 {
+		rows = max(0, bodyHeight-1)
+	}
+	if tabRow >= rows {
+		tabRow = -1
+	}
+	if windowRow >= rows {
+		windowRow = -1
+	}
+	return detailChromeMouseLayout{Rows: rows, TabRow: tabRow, WindowRow: windowRow}
 }
 
 func sheetLayout(width int) (int, int) {

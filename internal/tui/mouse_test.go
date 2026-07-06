@@ -43,6 +43,37 @@ func TestParseSGRMouseSplitSequence(t *testing.T) {
 	}
 }
 
+func TestParseSplitCSISequences(t *testing.T) {
+	keys, rest := parseKeysWithRemainder([]byte("\x1b"))
+	if len(keys) != 0 || string(rest) != "\x1b" {
+		t.Fatalf("ESC split keys=%#v rest=%q, want pending ESC", keys, rest)
+	}
+	keys, rest = parseKeysWithRemainder(append(rest, []byte("[A")...))
+	if len(rest) != 0 || len(keys) != 1 || keys[0].name != "up" {
+		t.Fatalf("split up keys=%#v rest=%q, want up", keys, rest)
+	}
+
+	keys, rest = parseKeysWithRemainder([]byte("\x1b[5"))
+	if len(keys) != 0 || string(rest) != "\x1b[5" {
+		t.Fatalf("pageup split keys=%#v rest=%q, want pending ESC[5", keys, rest)
+	}
+	keys, rest = parseKeysWithRemainder(append(rest, '~'))
+	if len(rest) != 0 || len(keys) != 1 || keys[0].name != "pageup" {
+		t.Fatalf("split pageup keys=%#v rest=%q, want pageup", keys, rest)
+	}
+}
+
+func TestFlushPendingEscAsBack(t *testing.T) {
+	keys := flushPendingKeys([]byte("\x1b"))
+	if len(keys) != 1 || keys[0].name != "back" {
+		t.Fatalf("keys = %#v, want standalone Esc as back", keys)
+	}
+	keys = parseKeys([]byte("\x1b"))
+	if len(keys) != 1 || keys[0].name != "back" {
+		t.Fatalf("parseKeys keys = %#v, want standalone Esc as back", keys)
+	}
+}
+
 func TestMouseClickLineOpensNodeDetail(t *testing.T) {
 	app := NewWithOptions(nil, Options{Mode: ModeLine})
 	app.snapshot = komari.Snapshot{
@@ -61,8 +92,8 @@ func TestMouseClickLineOpensNodeDetail(t *testing.T) {
 	if !app.detail {
 		t.Fatal("clicking a node should open detail view")
 	}
-	if app.scroll != 0 {
-		t.Fatalf("scroll = %d, want 0", app.scroll)
+	if app.detailScroll != 0 {
+		t.Fatalf("detailScroll = %d, want 0", app.detailScroll)
 	}
 }
 
@@ -88,8 +119,19 @@ func TestMouseClickLineWithSearchBarOpensCorrectNode(t *testing.T) {
 
 func TestMouseClickDetailFooterBackReturnsToList(t *testing.T) {
 	app := NewWithOptions(nil, Options{})
+	app.snapshot = komari.Snapshot{
+		Nodes: []komari.Node{
+			{UUID: "n1", Name: "one"},
+			{UUID: "n2", Name: "two"},
+			{UUID: "n3", Name: "three"},
+			{UUID: "n4", Name: "four"},
+			{UUID: "n5", Name: "five"},
+		},
+		Status: map[string]komari.Status{},
+	}
 	app.detail = true
-	app.scroll = 12
+	app.listScroll = 4
+	app.detailScroll = 12
 	_, height := terminalSize()
 	x, _, ok := footerLabelBounds(app.footerText(), "Back")
 	if !ok {
@@ -100,8 +142,11 @@ func TestMouseClickDetailFooterBackReturnsToList(t *testing.T) {
 	if app.detail {
 		t.Fatal("clicking detail footer back area should return to list")
 	}
-	if app.scroll != 0 {
-		t.Fatalf("scroll = %d, want 0", app.scroll)
+	if app.listScroll != 4 {
+		t.Fatalf("listScroll = %d, want 4", app.listScroll)
+	}
+	if app.detailScroll != 12 {
+		t.Fatalf("detailScroll = %d, want preserved 12", app.detailScroll)
 	}
 }
 
@@ -111,7 +156,7 @@ func TestMouseClickDetailChartOpensFocus(t *testing.T) {
 	node := komari.Node{UUID: "n1", Name: "one", MemTotal: 1000, DiskTotal: 2000}
 	app.snapshot = komari.Snapshot{
 		Nodes:  []komari.Node{node},
-		Status: map[string]komari.Status{node.UUID: {CPU: 30, Time: komari.NullTime{Time: now, Valid: true}}},
+		Status: map[string]komari.Status{node.UUID: {Online: true, CPU: 30, Time: komari.NullTime{Time: now, Valid: true}}},
 	}
 	app.detail = true
 	app.tab = 2
@@ -119,6 +164,34 @@ func TestMouseClickDetailChartOpensFocus(t *testing.T) {
 	app.handleKey(context.Background(), keyEvent{name: "mouse-left", x: 2, y: mouseHeaderRows + 5})
 	if !app.chartFocus {
 		t.Fatal("clicking chart card should open chart focus")
+	}
+}
+
+func TestMouseClickDetailWindowWithWarningDoesNotOpenChart(t *testing.T) {
+	app := NewWithOptions(nil, Options{ASCII: true, WarnCPU: 90})
+	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
+	node := komari.Node{UUID: "n1", Name: "one", MemTotal: 1000, DiskTotal: 2000}
+	app.snapshot = komari.Snapshot{
+		Nodes: []komari.Node{node},
+		Status: map[string]komari.Status{node.UUID: {
+			Online:    true,
+			CPU:       95,
+			RAM:       200,
+			RAMTotal:  1000,
+			Disk:      200,
+			DiskTotal: 2000,
+			Time:      komari.NullTime{Time: now, Valid: true},
+		}},
+	}
+	app.detail = true
+	app.tab = 2
+
+	app.handleKey(context.Background(), keyEvent{name: "mouse-left", x: len(" window  realtime ") + 2, y: mouseHeaderRows + 5})
+	if app.chartFocus {
+		t.Fatal("clicking warning-shifted window row should not open chart focus")
+	}
+	if app.window != 1 {
+		t.Fatalf("window = %d, want 1 after clicking 4h", app.window)
 	}
 }
 
@@ -141,6 +214,15 @@ func TestMouseClickChartFocusFooterActions(t *testing.T) {
 	app.handleKey(context.Background(), keyEvent{name: "mouse-left", x: x, y: height})
 	if app.chartFocusIndex != 1 {
 		t.Fatalf("chartFocusIndex = %d, want 1", app.chartFocusIndex)
+	}
+
+	x, ok = footerActionPosition(app, footerWindow)
+	if !ok {
+		t.Fatal("missing chart focus window footer action")
+	}
+	app.handleKey(context.Background(), keyEvent{name: "mouse-left", x: x, y: height})
+	if !app.chartFocus || app.window != 1 {
+		t.Fatalf("chartFocus=%t window=%d, want focus kept and window 1", app.chartFocus, app.window)
 	}
 
 	x, _, ok = footerLabelBounds(app.footerText(), "Esc/q back")
@@ -270,6 +352,43 @@ func TestFooterFoldsDetailAndSettingsActions(t *testing.T) {
 		if !strings.Contains(settingsFooter, label) {
 			t.Fatalf("folded settings footer %q missing %q", settingsFooter, label)
 		}
+	}
+}
+
+func TestMouseClickDetailFooterTabsWindowAndScroll(t *testing.T) {
+	app := NewWithOptions(nil, Options{})
+	app.detail = true
+	app.snapshot = komari.Snapshot{
+		Nodes:  []komari.Node{{UUID: "n1", Name: "one"}},
+		Status: map[string]komari.Status{},
+	}
+	_, height := terminalSize()
+
+	x, ok := footerActionPosition(app, footerTabs)
+	if !ok {
+		t.Fatal("missing tabs footer action")
+	}
+	app.handleKey(context.Background(), keyEvent{name: "mouse-left", x: x, y: height})
+	if app.tab != 1 {
+		t.Fatalf("tab = %d, want 1 after footer tabs click", app.tab)
+	}
+
+	x, ok = footerActionPosition(app, footerWindow)
+	if !ok {
+		t.Fatal("missing window footer action")
+	}
+	app.handleKey(context.Background(), keyEvent{name: "mouse-left", x: x, y: height})
+	if app.window != 1 {
+		t.Fatalf("window = %d, want 1 after footer window click", app.window)
+	}
+
+	x, ok = footerActionPosition(app, footerScroll)
+	if !ok {
+		t.Fatal("missing scroll footer action")
+	}
+	app.handleKey(context.Background(), keyEvent{name: "mouse-left", x: x, y: height})
+	if app.detailScroll != app.detailScrollStep() {
+		t.Fatalf("detailScroll = %d, want %d", app.detailScroll, app.detailScrollStep())
 	}
 }
 

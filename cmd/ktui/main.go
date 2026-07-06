@@ -669,19 +669,23 @@ Precedence:
 }
 
 func printKeysHelp() {
-	fmt.Print(`ktui keys
+	fmt.Print(keysHelpText())
+}
+
+func keysHelpText() string {
+	return `ktui keys
 
 List layer:
-	  Up/k, Down/j       select server
-	  Mouse wheel        select previous/next server
-	  Mouse click        open server detail
-	  Footer click       search/sort/filter/settings/mode/refresh/ascii/quit
-	  PgUp, PgDn         jump faster
-	  /                  edit node search
-	  c                  cycle sort: default/status/cpu/ram/traffic/expiry
-	  v                  cycle filter: all/offline/expiring/high-load
-	  Enter/o            open selected server detail
-	  s                  open settings
+  Up/k, Down/j       select server
+  Mouse wheel        select previous/next server
+  Mouse click        open server detail
+  Footer click       detail/search/sort/filter/settings/mode/refresh/ascii/quit
+  PgUp, PgDn         jump faster
+  /                  edit node search
+  c                  cycle sort: default/status/cpu/ram/traffic/expiry
+  v                  cycle filter: all/offline/expiring/high-load
+  Enter/o            open selected server detail
+  s                  open settings
   m                  switch line/sheet mode
   r                  refresh now
   d                  open or reload selected server detail data
@@ -699,7 +703,7 @@ Detail layer:
   Up/k, Down/j       scroll one card
   Mouse wheel        scroll detail cards
   Mouse click        switch tabs or time window
-  Footer click       Back/settings/refresh
+  Footer click       back/tabs/window/scroll/settings/refresh
   s                  open settings
   u                  show update command when an update is available
   PgUp, PgDn         scroll faster
@@ -708,21 +712,23 @@ Chart focus:
   Esc, b, q, Enter   return to detail layer
   h/l, PgUp/PgDn     switch focused chart
   [, ]               switch time window
+  Footer click       back/previous/next/window/refresh
 
 Settings layer:
-	  Esc, q, s          return to previous layer
-	  Up/k, Down/j       select setting
-	  Mouse wheel/click  select setting
-	  Footer click       back/adjust/toggle
-	  Left/h, Right/l    adjust value
-	  Enter              toggle or advance value
+  Esc, q, s          return to previous layer
+  Up/k, Down/j       select setting
+  Mouse wheel/click  select setting
+  Footer click       back/adjust/toggle
+  Left/h, Right/l    adjust value
+  Enter              toggle or advance value
+  url/api_key        shown as read-only
 
 Search:
-	  Type text          match node name, region, tags, group, IP, OS, UUID
-	  Backspace          delete one character
-	  Enter              apply search
-	  Esc                cancel editing
-	`)
+  Type text          match node name, region, tags, group, IP, OS, UUID
+  Backspace          delete one character
+  Enter              apply search
+  Esc                cancel editing
+`
 }
 
 func envBool(key string) bool {

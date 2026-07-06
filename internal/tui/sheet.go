@@ -28,22 +28,22 @@ func (a *App) renderSheetBody(width int, bodyHeight int) []string {
 
 	rowsVisible := max(1, bodyHeight/cardHeight)
 	selectedRow := a.selected / columns
-	if selectedRow < a.scroll {
-		a.scroll = selectedRow
+	if selectedRow < a.listScroll {
+		a.listScroll = selectedRow
 	}
-	if selectedRow >= a.scroll+rowsVisible {
-		a.scroll = selectedRow - rowsVisible + 1
+	if selectedRow >= a.listScroll+rowsVisible {
+		a.listScroll = selectedRow - rowsVisible + 1
 	}
 	maxScroll := max(0, (len(nodes)+columns-1)/columns-rowsVisible)
-	if a.scroll > maxScroll {
-		a.scroll = maxScroll
+	if a.listScroll > maxScroll {
+		a.listScroll = maxScroll
 	}
-	if a.scroll < 0 {
-		a.scroll = 0
+	if a.listScroll < 0 {
+		a.listScroll = 0
 	}
 
 	lines := make([]string, 0, bodyHeight)
-	startRow := a.scroll
+	startRow := a.listScroll
 	endRow := min((len(nodes)+columns-1)/columns, startRow+rowsVisible)
 	for row := startRow; row < endRow; row++ {
 		rowCards := make([][]string, 0, columns)
@@ -70,7 +70,7 @@ func (a *App) renderSheetBody(width int, bodyHeight int) []string {
 	return a.withScrollIndicator(lines, width, scrollIndicator{
 		Start:   0,
 		Height:  bodyHeight,
-		Offset:  a.scroll,
+		Offset:  a.listScroll,
 		Visible: rowsVisible,
 		Total:   (len(nodes) + columns - 1) / columns,
 	})

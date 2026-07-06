@@ -9,13 +9,38 @@ import (
 	"ktui/internal/komari"
 )
 
+type viewNodesCache struct {
+	Valid bool
+	Key   viewNodesCacheKey
+	Nodes []komari.Node
+}
+
+type viewNodesCacheKey struct {
+	Filter         nodeFilterMode
+	Query          string
+	Sort           nodeSortMode
+	NodesLen       int
+	StatusLen      int
+	FetchedAt      time.Time
+	WarnCPU        float64
+	WarnRAM        float64
+	WarnDisk       float64
+	WarnExpiryDays int
+	ExpiryBucket   int64
+}
+
 func (a *App) viewNodes() []komari.Node {
 	return a.viewNodesForFilter(a.nodeFilter)
 }
 
 func (a *App) viewNodesForFilter(filter nodeFilterMode) []komari.Node {
+	key := a.viewNodesCacheKey(filter)
+	if a.viewCache.Valid && a.viewCache.Key == key {
+		return a.viewCache.Nodes
+	}
+
 	nodes := make([]komari.Node, 0, len(a.snapshot.Nodes))
-	query := a.currentSearchQuery()
+	query := key.Query
 	for _, node := range a.snapshot.Nodes {
 		st := a.snapshot.Status[node.UUID]
 		if query != "" && !a.nodeMatchesSearch(node, query) {
@@ -27,7 +52,36 @@ func (a *App) viewNodesForFilter(filter nodeFilterMode) []komari.Node {
 		nodes = append(nodes, node)
 	}
 	a.sortNodes(nodes)
+	a.viewCache = viewNodesCache{
+		Valid: true,
+		Key:   key,
+		Nodes: nodes,
+	}
 	return nodes
+}
+
+func (a *App) viewNodesCacheKey(filter nodeFilterMode) viewNodesCacheKey {
+	expiryBucket := int64(0)
+	if filter == nodeFilterExpiring {
+		expiryBucket = time.Now().Unix() / 60
+	}
+	return viewNodesCacheKey{
+		Filter:         filter,
+		Query:          a.currentSearchQuery(),
+		Sort:           a.nodeSort,
+		NodesLen:       len(a.snapshot.Nodes),
+		StatusLen:      len(a.snapshot.Status),
+		FetchedAt:      a.snapshot.FetchedAt,
+		WarnCPU:        a.warnCPU,
+		WarnRAM:        a.warnRAM,
+		WarnDisk:       a.warnDisk,
+		WarnExpiryDays: a.warnExpiryDays,
+		ExpiryBucket:   expiryBucket,
+	}
+}
+
+func (a *App) invalidateViewNodesCache() {
+	a.viewCache = viewNodesCache{}
 }
 
 func (a *App) selectedNode() (komari.Node, bool) {
@@ -68,7 +122,7 @@ func (a *App) selectNodeUUID(uuid string) bool {
 func (a *App) restoreSelection(uuid string) {
 	if !a.selectNodeUUID(uuid) {
 		a.selected = 0
-		a.scroll = 0
+		a.listScroll = 0
 	}
 	a.clampSelection()
 }

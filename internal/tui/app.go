@@ -21,7 +21,9 @@ type App struct {
 	mode            Mode
 
 	selected          int
-	scroll            int
+	listScroll        int
+	detailScroll      int
+	settingsScroll    int
 	tab               int
 	window            int
 	detail            bool
@@ -42,9 +44,15 @@ type App struct {
 	searchEditing     bool
 	searchQuery       string
 	searchDraft       string
+	searchAnchorUUID  string
 	nodeFilter        nodeFilterMode
 	nodeSort          nodeSortMode
 	notice            string
+
+	frameCache  []string
+	frameWidth  int
+	frameHeight int
+	viewCache   viewNodesCache
 
 	snapshot komari.Snapshot
 	err      error
@@ -361,6 +369,7 @@ func (a *App) Run(ctx context.Context) error {
 			a.err = result.err
 			if result.err == nil {
 				a.snapshot = result.snapshot
+				a.invalidateViewNodesCache()
 				if result.full {
 					a.lastFullFetch = result.snapshot.FetchedAt
 				}

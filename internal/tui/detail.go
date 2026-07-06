@@ -41,27 +41,27 @@ func (a *App) renderDetailBody(width int, bodyHeight int) []string {
 
 	content := a.detailContentLines(node, st, width, cardHeight)
 	if contentHeight >= cardHeight {
-		a.scroll = a.scroll / cardHeight * cardHeight
+		a.detailScroll = a.detailScroll / cardHeight * cardHeight
 	}
 	maxScroll := max(0, len(content)-contentHeight)
 	if contentHeight >= cardHeight {
 		maxScroll = maxScroll / cardHeight * cardHeight
 	}
-	if a.scroll > maxScroll {
-		a.scroll = maxScroll
+	if a.detailScroll > maxScroll {
+		a.detailScroll = maxScroll
 	}
-	if a.scroll < 0 {
-		a.scroll = 0
+	if a.detailScroll < 0 {
+		a.detailScroll = 0
 	}
-	end := min(len(content), a.scroll+contentHeight)
+	end := min(len(content), a.detailScroll+contentHeight)
 	lines := make([]string, 0, bodyHeight)
 	lines = append(lines, chrome...)
-	lines = append(lines, content[a.scroll:end]...)
+	lines = append(lines, content[a.detailScroll:end]...)
 	lines = fillBody(lines, width, bodyHeight)
 	return a.withScrollIndicator(lines, width, scrollIndicator{
 		Start:   len(chrome),
 		Height:  contentHeight,
-		Offset:  a.scroll,
+		Offset:  a.detailScroll,
 		Visible: contentHeight,
 		Total:   len(content),
 	})
@@ -341,7 +341,7 @@ func (a *App) focusChart(index int) bool {
 	}
 	a.chartFocus = true
 	a.chartFocusIndex = index
-	a.scroll = 0
+	a.detailScroll = 0
 	return true
 }
 

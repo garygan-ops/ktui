@@ -30,15 +30,15 @@ func (a *App) renderLineBody(width int, bodyHeight int) []string {
 
 	lines := make([]string, 0, bodyHeight)
 	lines = append(lines, header...)
-	end := min(len(nodes), a.scroll+visibleRows)
-	for i := a.scroll; i < end; i++ {
+	end := min(len(nodes), a.listScroll+visibleRows)
+	for i := a.listScroll; i < end; i++ {
 		lines = append(lines, a.lineTableRow(i, nodes[i], width))
 	}
 	lines = fillBody(lines, width, bodyHeight)
 	return a.withScrollIndicator(lines, width, scrollIndicator{
 		Start:   len(header),
 		Height:  visibleRows,
-		Offset:  a.scroll,
+		Offset:  a.listScroll,
 		Visible: visibleRows,
 		Total:   len(nodes),
 	})

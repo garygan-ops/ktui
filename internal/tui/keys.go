@@ -26,22 +26,33 @@ func (a *App) readKeys(ctx context.Context) {
 			return
 		}
 		if n == 0 {
+			if len(pending) > 0 {
+				a.enqueueKeys(flushPendingKeys(pending))
+				pending = pending[:0]
+			}
 			continue
 		}
 		pending = append(pending, buf[:n]...)
 		keys, rest := parseKeysWithRemainder(pending)
 		pending = rest
-		for _, key := range keys {
-			select {
-			case a.keyCh <- key:
-			default:
-			}
+		a.enqueueKeys(keys)
+	}
+}
+
+func (a *App) enqueueKeys(keys []keyEvent) {
+	for _, key := range keys {
+		select {
+		case a.keyCh <- key:
+		default:
 		}
 	}
 }
 
 func parseKeys(data []byte) []keyEvent {
-	keys, _ := parseKeysWithRemainder(data)
+	keys, rest := parseKeysWithRemainder(data)
+	if len(rest) > 0 {
+		keys = append(keys, flushPendingKeys(rest)...)
+	}
 	return keys
 }
 
@@ -102,7 +113,13 @@ func parseKeysWithRemainder(data []byte) ([]keyEvent, []byte) {
 		case ']':
 			out = append(out, keyEvent{name: "window-right", text: string(data[i])})
 		case 0x1b:
-			if i+2 < len(data) && data[i+1] == '[' {
+			if i+1 >= len(data) {
+				return out, append([]byte(nil), data[i:]...)
+			}
+			if data[i+1] == '[' {
+				if i+2 >= len(data) {
+					return out, append([]byte(nil), data[i:]...)
+				}
 				if data[i+2] == '<' {
 					key, next, ok, incomplete := parseSGRMouse(data, i)
 					if incomplete {
@@ -128,15 +145,21 @@ func parseKeysWithRemainder(data []byte) ([]keyEvent, []byte) {
 					out = append(out, keyEvent{name: "tab-left"})
 					i += 2
 				case '5':
+					if i+3 >= len(data) {
+						return out, append([]byte(nil), data[i:]...)
+					}
 					out = append(out, keyEvent{name: "pageup"})
-					if i+3 < len(data) && data[i+3] == '~' {
+					if data[i+3] == '~' {
 						i += 3
 					} else {
 						i += 2
 					}
 				case '6':
+					if i+3 >= len(data) {
+						return out, append([]byte(nil), data[i:]...)
+					}
 					out = append(out, keyEvent{name: "pagedown"})
-					if i+3 < len(data) && data[i+3] == '~' {
+					if data[i+3] == '~' {
 						i += 3
 					} else {
 						i += 2
@@ -161,6 +184,17 @@ func parseKeysWithRemainder(data []byte) ([]keyEvent, []byte) {
 		}
 	}
 	return out, nil
+}
+
+func flushPendingKeys(data []byte) []keyEvent {
+	if len(data) == 0 {
+		return nil
+	}
+	if data[0] == 0x1b {
+		return []keyEvent{{name: "back"}}
+	}
+	keys, _ := parseKeysWithRemainder(data)
+	return keys
 }
 
 func parseSGRMouse(data []byte, start int) (keyEvent, int, bool, bool) {
@@ -223,8 +257,14 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 	if isMouseKey(key.name) {
 		a.handleMouse(ctx, key)
 		a.clampSelection()
-		if a.scroll < 0 {
-			a.scroll = 0
+		if a.listScroll < 0 {
+			a.listScroll = 0
+		}
+		if a.detailScroll < 0 {
+			a.detailScroll = 0
+		}
+		if a.settingsScroll < 0 {
+			a.settingsScroll = 0
 		}
 		return
 	}
@@ -244,7 +284,6 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 			a.closeChartFocus()
 		} else if a.detail {
 			a.detail = false
-			a.scroll = 0
 		} else if a.clearListScope() {
 			// q backs out of a narrowed list before it quits the app.
 		} else {
@@ -255,7 +294,6 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 			a.closeChartFocus()
 		} else if a.detail {
 			a.detail = false
-			a.scroll = 0
 		} else {
 			a.clearListScope()
 		}
@@ -282,7 +320,7 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 			a.focusChart(a.chartFocusIndex)
 		} else if _, ok := a.selectedNode(); ok {
 			a.detail = true
-			a.scroll = 0
+			a.detailScroll = 0
 			a.ensureSelectedDetail(ctx)
 		}
 	case "chart-focus":
@@ -297,7 +335,7 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 	case "detail-refresh":
 		if node, ok := a.selectedNode(); ok {
 			a.detail = true
-			a.scroll = 0
+			a.detailScroll = 0
 			a.fetchDetail(ctx, node.UUID, true)
 		}
 	case "ascii":
@@ -314,7 +352,7 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 		if a.chartFocus {
 			// no-op; focused charts use h/l for chart selection.
 		} else if a.detail {
-			a.scroll -= a.detailScrollStep()
+			a.detailScroll -= a.detailScrollStep()
 		} else {
 			a.selected--
 		}
@@ -322,7 +360,7 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 		if a.chartFocus {
 			// no-op; focused charts use h/l for chart selection.
 		} else if a.detail {
-			a.scroll += a.detailScrollStep()
+			a.detailScroll += a.detailScrollStep()
 		} else {
 			a.selected++
 		}
@@ -330,7 +368,7 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 		if a.chartFocus {
 			a.moveChartFocus(-1)
 		} else if a.detail {
-			a.scroll -= a.detailScrollStep() * 3
+			a.detailScroll -= a.detailScrollStep() * 3
 		} else {
 			a.selected -= 10
 		}
@@ -338,19 +376,19 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 		if a.chartFocus {
 			a.moveChartFocus(1)
 		} else if a.detail {
-			a.scroll += a.detailScrollStep() * 3
+			a.detailScroll += a.detailScrollStep() * 3
 		} else {
 			a.selected += 10
 		}
 	case "top":
 		if a.detail {
-			a.scroll = 0
+			a.detailScroll = 0
 		} else {
 			a.selected = 0
 		}
 	case "bottom":
 		if a.detail {
-			a.scroll = 1 << 30
+			a.detailScroll = 1 << 30
 		} else {
 			a.selected = len(a.viewNodes()) - 1
 		}
@@ -358,46 +396,39 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 		if a.chartFocus {
 			a.moveChartFocus(-1)
 		} else if a.detail {
-			a.tab = (a.tab + len(tabNames) - 1) % len(tabNames)
-			a.scroll = 0
-			a.closeChartFocus()
+			a.cycleDetailTab(ctx, -1)
 		}
 	case "tab-right":
 		if a.chartFocus {
 			a.moveChartFocus(1)
 		} else if a.detail {
-			a.tab = (a.tab + 1) % len(tabNames)
-			a.scroll = 0
-			a.closeChartFocus()
+			a.cycleDetailTab(ctx, 1)
 		}
 	case "tab-1", "tab-2", "tab-3", "tab-4", "tab-5":
 		if a.detail {
 			a.tab = int(key.name[len(key.name)-1] - '1')
-			a.scroll = 0
+			a.detailScroll = 0
 			a.closeChartFocus()
 		}
 	case "window-left":
 		if a.chartFocus {
-			a.window = (a.window + len(detailWindows) - 1) % len(detailWindows)
-			a.scroll = 0
+			a.cycleDetailWindow(ctx, -1)
 		} else if a.detail {
-			a.window = (a.window + len(detailWindows) - 1) % len(detailWindows)
-			a.scroll = 0
-			a.closeChartFocus()
+			a.cycleDetailWindow(ctx, -1)
 		}
 	case "window-right":
 		if a.chartFocus {
-			a.window = (a.window + 1) % len(detailWindows)
-			a.scroll = 0
+			a.cycleDetailWindow(ctx, 1)
 		} else if a.detail {
-			a.window = (a.window + 1) % len(detailWindows)
-			a.scroll = 0
-			a.closeChartFocus()
+			a.cycleDetailWindow(ctx, 1)
 		}
 	}
 	a.clampSelection()
-	if a.scroll < 0 {
-		a.scroll = 0
+	if a.listScroll < 0 {
+		a.listScroll = 0
+	}
+	if a.detailScroll < 0 {
+		a.detailScroll = 0
 	}
 	if a.detail && (previous != a.selected || previousTab != a.tab || previousWindow != a.window || a.tabNeedsDetail()) {
 		a.ensureSelectedDetail(ctx)
@@ -407,25 +438,31 @@ func (a *App) handleKey(ctx context.Context, key keyEvent) {
 func (a *App) openSearch() {
 	a.searchEditing = true
 	a.searchDraft = a.searchQuery
+	a.searchAnchorUUID = a.selectedNodeUUID()
 	a.notice = ""
 }
 
 func (a *App) handleSearchKey(key keyEvent) {
 	selected := a.selectedNodeUUID()
+	if selected == "" {
+		selected = a.searchAnchorUUID
+	}
 	switch key.name {
 	case "force-quit":
 		a.quit = true
 	case "open":
 		if key.text == "" {
 			a.searchQuery = strings.TrimSpace(a.searchDraft)
+			a.searchDraft = a.searchQuery
 			a.searchEditing = false
+			a.searchAnchorUUID = ""
 		} else {
 			a.searchDraft += key.text
 		}
 	case "back":
 		if key.text == "" {
-			a.searchDraft = a.searchQuery
-			a.searchEditing = false
+			a.cancelSearch()
+			return
 		} else {
 			a.searchDraft += key.text
 		}
@@ -436,6 +473,17 @@ func (a *App) handleSearchKey(key keyEvent) {
 			a.searchDraft += key.text
 		}
 	}
+	a.restoreSelection(selected)
+}
+
+func (a *App) cancelSearch() {
+	selected := a.searchAnchorUUID
+	if selected == "" {
+		selected = a.selectedNodeUUID()
+	}
+	a.searchDraft = a.searchQuery
+	a.searchEditing = false
+	a.searchAnchorUUID = ""
 	a.restoreSelection(selected)
 }
 
@@ -468,8 +516,10 @@ func (a *App) handleSettingsKey(key keyEvent) {
 		a.moveSettingsSelection(1)
 	case "top":
 		a.settingsSelected = 0
+		a.settingsScroll = 0
 	case "bottom":
 		a.settingsSelected = max(0, a.settingsCount()-1)
+		a.settingsScroll = 1 << 30
 	case "tab-left", "window-left":
 		a.adjustSelectedSetting(-1)
 	case "tab-right", "window-right", "open":
@@ -477,6 +527,29 @@ func (a *App) handleSettingsKey(key keyEvent) {
 	case "ascii":
 		a.style.ASCII = !a.style.ASCII
 		a.persistSettings()
+	}
+}
+
+func (a *App) cycleDetailTab(ctx context.Context, delta int) {
+	if len(tabNames) == 0 {
+		return
+	}
+	a.tab = (a.tab + delta + len(tabNames)) % len(tabNames)
+	a.detailScroll = 0
+	a.closeChartFocus()
+	if a.detail && a.tabNeedsDetail() {
+		a.ensureSelectedDetail(ctx)
+	}
+}
+
+func (a *App) cycleDetailWindow(ctx context.Context, delta int) {
+	if len(detailWindows) == 0 {
+		return
+	}
+	a.window = (a.window + delta + len(detailWindows)) % len(detailWindows)
+	a.detailScroll = 0
+	if a.detail {
+		a.ensureSelectedDetail(ctx)
 	}
 }
 
@@ -495,7 +568,7 @@ func (a *App) clampSelection() {
 	count := len(a.viewNodes())
 	if count == 0 {
 		a.selected = 0
-		a.scroll = 0
+		a.listScroll = 0
 		return
 	}
 	if a.selected < 0 {
