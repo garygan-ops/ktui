@@ -65,11 +65,11 @@ release:
   header: |
     ## 本次更新重点
 
-    - 新增 About 视图：按 `?` 可以查看 ktui 构建信息、Komari 服务端信息、连接状态、显示设置和常用命令。
-    - 重构命令行结构：新增 `ktui status`，将更新命令拆为 `ktui update check` 和 `ktui update install`，并使用 `--mode sheet|line` 统一显示模式参数。
-    - 新增 Komari 服务端更新提示：TUI 会根据当前 Komari 服务端版本检查 `komari-monitor/komari` GitHub Release，有新版本时可按 `u` 查看更新详情。
-    - 改进 TUI 交互与发现性：设置页可进入 About，About 支持键盘和鼠标滚动，底部操作提示覆盖更多视图。
-    - 修复滚动条和边框显示问题：避免滚动条与表格边沿重合，并统一 ASCII / UTF-8 模式下边框颜色。
+    - 新增 Profile 多站点管理：支持 `ktui profile add/list/current/use/rename/remove`，可为多个 Komari 站点保存独立 URL 和 API key。
+    - 支持运行中切换 Profile：Settings 页面可直接切换当前 profile，切换后会重建连接、清空旧站点缓存并重新加载数据。
+    - 支持 Profile 重命名：命令行可使用 `ktui profile rename <old> <new>`，Settings 页面可通过 `rename_profile` 编辑当前 profile 名称。
+    - 新增 `realtime_window`：可设置 `1m`、`5m`、`10m` 控制 realtime 图表横轴范围，并移除用户侧 `realtime_points` 配置。
+    - 更新 Settings / About / README / help 文档：更清楚展示当前 profile、站点名、连接 URL 和 profile 操作方式。
 
     本 Release 由 GoReleaser 自动生成。
 

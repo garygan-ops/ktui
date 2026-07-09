@@ -115,12 +115,14 @@ func handleExport(args []string) error {
 	}
 
 	var (
-		baseURL string
-		apiKey  string
-		timeout time.Duration
-		output  string
+		baseURL     string
+		apiKey      string
+		timeout     time.Duration
+		output      string
+		profileName string
 	)
 	fs := flag.NewFlagSet("ktui export "+format, flag.ExitOnError)
+	fs.StringVar(&profileName, "profile", cfg.Profile, "profile name")
 	fs.StringVar(&baseURL, "url", cfg.URL, "Komari base URL")
 	fs.StringVar(&apiKey, "api-key", cfg.APIKey, "Komari API key (sent as Bearer token)")
 	fs.DurationVar(&timeout, "timeout", timeoutDefault, "HTTP timeout")
@@ -133,6 +135,10 @@ func handleExport(args []string) error {
 	}
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected export argument %q", fs.Arg(0))
+	}
+	cfg, err = applyProfileFlag(cfg, profileName, fs, &baseURL, &apiKey)
+	if err != nil {
+		return err
 	}
 
 	baseURL, apiKey, err = prepareConnectionConfig(cfg, baseURL, apiKey, os.Stdin, os.Stdout)
@@ -658,6 +664,7 @@ Usage:
   ktui export <markdown|csv|json> [flags]
 
 Flags:
+  --profile NAME    profile name
   --url URL          Komari base URL
   --api-key KEY     Komari API key, sent as a Bearer token
   --timeout 10s     HTTP timeout

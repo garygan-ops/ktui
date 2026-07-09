@@ -105,20 +105,11 @@ func (a *App) realtimeNowOrTime(fallback time.Time) time.Time {
 }
 
 func (a *App) maxRealtimeSamples() int {
-	if a.realtimePoints > 0 {
-		if a.realtimePoints < 2 {
-			return 2
-		}
-		if a.realtimePoints > maxRealtimeSamplesCap {
-			return maxRealtimeSamplesCap
-		}
-		return a.realtimePoints
-	}
 	interval := a.refreshInterval
 	if interval <= 0 {
 		interval = defaultRefreshInterval
 	}
-	limit := int(realtimeWindowDuration / interval)
+	limit := int(a.realtimeWindowDuration() / interval)
 	if limit < 2 {
 		return 2
 	}
@@ -126,6 +117,13 @@ func (a *App) maxRealtimeSamples() int {
 		return maxRealtimeSamplesCap
 	}
 	return limit
+}
+
+func (a *App) realtimeWindowDuration() time.Duration {
+	if a.realtimeWindow <= 0 {
+		return defaultRealtimeWindowDuration
+	}
+	return a.realtimeWindow
 }
 
 func sortStatusSamples(records []komari.Status) {

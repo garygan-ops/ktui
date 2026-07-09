@@ -328,6 +328,8 @@ func (a *App) openSettings() {
 
 func (a *App) closeSettings() {
 	a.settings = false
+	a.settingsRenamingProfile = false
+	a.settingsProfileDraft = ""
 	a.detail = a.settingsWasDetail
 	a.settingsWasDetail = false
 }

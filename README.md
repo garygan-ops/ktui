@@ -54,7 +54,7 @@ irm https://gitea.bytevibe.dev/gary/ktui/raw/branch/main/install.ps1 | iex
 安装指定版本或目录：
 
 ```sh
-curl -fsSL https://gitea.bytevibe.dev/gary/ktui/raw/branch/main/install.sh | KTUI_VERSION=v0.1.0 sh
+curl -fsSL https://gitea.bytevibe.dev/gary/ktui/raw/branch/main/install.sh | KTUI_VERSION=v0.5.0 sh
 curl -fsSL https://gitea.bytevibe.dev/gary/ktui/raw/branch/main/install.sh | KTUI_INSTALL_DIR=/usr/local/bin sh
 ```
 
@@ -70,7 +70,7 @@ curl -fsSL https://gitea.bytevibe.dev/gary/ktui/raw/branch/main/install.sh | KTU
 
 ```sh
 go build -o ktui ./cmd/ktui
-./ktui config set url https://komari.example.com
+./ktui profile add default --url https://komari.example.com --use
 ./ktui
 ```
 
@@ -145,12 +145,13 @@ ktui [flags]
 ktui status [flags]
 ktui export <markdown|csv|json> [flags]
 ktui config <init|path|show|set|help>
+ktui profile <list|current|use|add|rename|remove>
 ktui update <check|install>
 ktui version
-ktui help [status|config|keys|update|export]
+ktui help [status|config|profile|keys|update|export]
 ```
 
-TUI 专属显示参数使用 `--mode sheet|line`。一次性拉取摘要使用 `ktui status`，更新检查和安装分别使用 `ktui update check`、`ktui update install`。
+连接到多个 Komari 站点时使用 `ktui profile ...` 管理，并可用 `--profile name` 临时选择。TUI 专属显示参数使用 `--mode sheet|line`。`--realtime-window 1m|5m|10m` 控制 realtime 图表横轴时间范围。一次性拉取摘要使用 `ktui status`，更新检查和安装分别使用 `ktui update check`、`ktui update install`。
 
 ## 配置文件
 
@@ -160,18 +161,18 @@ TUI 专属显示参数使用 `--mode sheet|line`。一次性拉取摘要使用 `
 ./ktui config init
 ```
 
-首次启动未配置 URL 时会自动进入引导。也可以提前手动设置 URL：
+首次启动未配置 URL 时会自动进入引导，并写入当前 profile。也可以提前手动添加 profile：
 
 ```sh
-./ktui config set url https://komari.example.com
+./ktui profile add default --url https://komari.example.com --api-key your_api_key --use
 ```
 
 设置常用配置：
 
 ```sh
-./ktui config set url https://komari.example.com
-./ktui config set api-key your_api_key
+./ktui profile add prod --url https://komari.example.com --api-key your_api_key --use
 ./ktui config set mode sheet
+./ktui config set realtime-window 5m
 ./ktui config show
 ```
 
@@ -198,11 +199,19 @@ KTUI_CONFIG=/path/to/config.json ./ktui
 
 ```json
 {
-  "url": "",
-  "api_key": "",
+  "profile": "default",
+  "profiles": {
+    "default": {
+      "url": "https://komari.example.com",
+      "api_key": "your_api_key"
+    },
+    "lab": {
+      "url": "https://lab.example.com"
+    }
+  },
   "interval": "5s",
   "timeout": "10s",
-  "realtime_points": 0,
+  "realtime_window": "1m",
   "chart_y_axis": "absolute",
   "warn_cpu": 90,
   "warn_ram": 85,
@@ -225,13 +234,50 @@ KTUI_CONFIG=/path/to/config.json ./ktui
 ```sh
 KTUI_URL=https://komari.example.com ./ktui
 KTUI_API_KEY=your_api_key ./ktui
+KTUI_PROFILE=lab ./ktui
 KTUI_MODE=line ./ktui
-KTUI_REALTIME_POINTS=150 ./ktui
+KTUI_REALTIME_WINDOW=5m ./ktui
 KTUI_CHART_Y_AXIS=relative ./ktui
 KTUI_WARN_CPU=85 KTUI_WARN_DISK=90 ./ktui
 KTUI_WARN_EXPIRY_DAYS=14 ./ktui
 KTUI_ASCII=1 NO_COLOR=1 ./ktui
 ```
+
+## Profile 多站点
+
+每个 profile 保存一个 Komari 站点的 URL 和可选 API key。`profile` 字段表示默认启动使用哪个 profile：
+
+```sh
+./ktui profile add prod --url https://komari.example.com --api-key your_api_key --use
+./ktui profile add lab --url https://lab.example.com
+./ktui profile list
+./ktui profile use prod
+./ktui profile rename lab staging
+```
+
+临时切换，不修改默认 profile：
+
+```sh
+./ktui --profile lab
+./ktui status --profile lab
+./ktui export markdown --profile lab -o lab.md
+KTUI_PROFILE=prod ./ktui
+```
+
+TUI 运行中也可以在 Settings 页面选中 `profile`，用左/右方向键在已配置的 profile 之间切换。选中 `rename_profile` 后按 Enter 可以重命名当前 profile。切换后 ktui 会清空当前站点缓存并重新加载新站点数据。Settings 和 About 页面都会显示当前 profile、站点名和连接 URL。
+
+`ktui config set url ...` 和 `ktui config set api-key ...` 会更新当前默认 profile 的连接信息。
+
+## Realtime 图表窗口
+
+`realtime_window` 控制详情页 `realtime` 图表横轴时间范围，可设置为 `1m`、`5m` 或 `10m`：
+
+```sh
+./ktui --realtime-window 5m
+./ktui config set realtime-window 10m
+```
+
+实时样本保留数量会根据 `realtime_window` 和刷新间隔自动计算，并受内部上限保护。
 
 ## 显示模式
 
@@ -321,7 +367,7 @@ ktui version
 ```sh
 ktui update check
 ktui update install
-ktui update install --tag v0.1.0
+ktui update install --tag v0.5.0
 ```
 
 默认更新源：

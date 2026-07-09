@@ -1,8 +1,10 @@
 package config
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDefaultURLIsEmpty(t *testing.T) {
@@ -17,8 +19,114 @@ func TestWithDefaultsDoesNotFillURL(t *testing.T) {
 	if cfg.URL != "" {
 		t.Fatalf("URL after defaults = %q, want empty", cfg.URL)
 	}
+	if cfg.Profile != DefaultProfile {
+		t.Fatalf("Profile after defaults = %q, want %q", cfg.Profile, DefaultProfile)
+	}
 	if cfg.Interval == "" || cfg.Timeout == "" || cfg.Mode == "" {
 		t.Fatalf("expected non-URL defaults to be filled: %+v", cfg)
+	}
+}
+
+func TestUnmarshalMigratesLegacyConnectionToDefaultProfile(t *testing.T) {
+	var cfg Config
+	if err := json.Unmarshal([]byte(`{"url":"https://komari.example.com","api_key":"secret"}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg = cfg.WithDefaults()
+
+	if cfg.Profile != DefaultProfile {
+		t.Fatalf("Profile = %q, want %q", cfg.Profile, DefaultProfile)
+	}
+	if cfg.URL != "https://komari.example.com" || cfg.APIKey != "secret" {
+		t.Fatalf("effective connection = %q/%q", cfg.URL, cfg.APIKey)
+	}
+	if got := cfg.Profiles[DefaultProfile]; got.URL != cfg.URL || got.APIKey != cfg.APIKey {
+		t.Fatalf("default profile = %+v, want migrated connection", got)
+	}
+}
+
+func TestProfileAddUseAndRemove(t *testing.T) {
+	cfg, err := AddProfile(Default(), "prod", "https://prod.example.com", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = UseProfile(cfg, "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Profile != "prod" || cfg.URL != "https://prod.example.com" || cfg.APIKey != "secret" {
+		t.Fatalf("active profile = %q %q %q", cfg.Profile, cfg.URL, cfg.APIKey)
+	}
+	cfg, err = RemoveProfile(cfg, "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Profile == "prod" {
+		t.Fatalf("removed profile is still active: %+v", cfg)
+	}
+	if _, ok := cfg.Profiles["prod"]; ok {
+		t.Fatalf("removed profile remains in map: %+v", cfg.Profiles)
+	}
+}
+
+func TestRenameProfile(t *testing.T) {
+	cfg, err := AddProfile(Default(), "prod", "https://prod.example.com", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = UseProfile(cfg, "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = RenameProfile(cfg, "prod", "primary")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Profile != "primary" || cfg.URL != "https://prod.example.com" || cfg.APIKey != "secret" {
+		t.Fatalf("renamed active profile = %q %q %q", cfg.Profile, cfg.URL, cfg.APIKey)
+	}
+	if _, ok := cfg.Profiles["prod"]; ok {
+		t.Fatalf("old profile remains: %+v", cfg.Profiles)
+	}
+	if got := cfg.Profiles["primary"]; got.URL != "https://prod.example.com" || got.APIKey != "secret" {
+		t.Fatalf("renamed profile = %+v", got)
+	}
+}
+
+func TestRenameProfileRejectsExistingName(t *testing.T) {
+	cfg, err := AddProfile(Default(), "prod", "https://prod.example.com", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := RenameProfile(cfg, "prod", DefaultProfile); err == nil {
+		t.Fatal("expected rename to existing profile to fail")
+	}
+}
+
+func TestSetURLAndAPIKeyUpdateActiveProfile(t *testing.T) {
+	cfg, err := Set(Default(), "url", "https://komari.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Set(cfg, "api-key", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	profile := cfg.Profiles[cfg.Profile]
+	if profile.URL != "https://komari.example.com" || profile.APIKey != "secret" {
+		t.Fatalf("active profile = %+v", profile)
+	}
+}
+
+func TestRedactedMasksProfileAPIKeys(t *testing.T) {
+	cfg, err := AddProfile(Default(), "prod", "https://prod.example.com", "secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	redacted := cfg.Redacted()
+	if redacted.Profiles["prod"].APIKey != "********" {
+		t.Fatalf("redacted API key = %q", redacted.Profiles["prod"].APIKey)
 	}
 }
 
@@ -52,13 +160,26 @@ func TestPathCanBeOverridden(t *testing.T) {
 	}
 }
 
-func TestSetRealtimePoints(t *testing.T) {
-	cfg, err := Set(Default(), "realtime-points", "150")
+func TestSetRealtimeWindow(t *testing.T) {
+	cfg, err := Set(Default(), "realtime-window", "5m0s")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.RealtimePoints != 150 {
-		t.Fatalf("RealtimePoints = %d, want 150", cfg.RealtimePoints)
+	if cfg.RealtimeWindow != "5m" {
+		t.Fatalf("RealtimeWindow = %q, want 5m", cfg.RealtimeWindow)
+	}
+	duration, err := cfg.RealtimeWindowDuration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if duration != 5*time.Minute {
+		t.Fatalf("RealtimeWindowDuration = %s, want 5m", duration)
+	}
+}
+
+func TestSetRejectsRealtimePoints(t *testing.T) {
+	if _, err := Set(Default(), "realtime-points", "150"); err == nil {
+		t.Fatal("expected realtime-points to be rejected")
 	}
 }
 
@@ -101,11 +222,11 @@ func TestSetWarningThresholds(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsNegativeRealtimePoints(t *testing.T) {
+func TestValidateRejectsInvalidRealtimeWindow(t *testing.T) {
 	cfg := Default()
-	cfg.RealtimePoints = -1
+	cfg.RealtimeWindow = "2m"
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("expected negative realtime_points to be rejected")
+		t.Fatal("expected invalid realtime_window to be rejected")
 	}
 }
 

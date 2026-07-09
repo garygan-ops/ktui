@@ -28,7 +28,7 @@ func (a *App) metricSeriesChartSection(title string, records []komari.Status, un
 	var until time.Time
 	if realtime {
 		if last := lastRecordTime(records); last.Valid {
-			window = realtimeWindowDuration
+			window = a.realtimeWindowDuration()
 			until = a.realtimeNowOrTime(last.Time)
 			from = chartRealtimeTimeLabelFromTime(until.Add(-window))
 			to = chartRealtimeTimeLabelFromTime(until)

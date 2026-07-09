@@ -519,6 +519,10 @@ func isMouseKey(name string) bool {
 }
 
 func (a *App) handleSettingsKey(key keyEvent) {
+	if a.settingsRenamingProfile {
+		a.handleRenameProfileKey(key)
+		return
+	}
 	switch key.name {
 	case "force-quit":
 		a.quit = true

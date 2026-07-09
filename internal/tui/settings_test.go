@@ -23,7 +23,7 @@ func TestSettingsKeyOpensSettingsPage(t *testing.T) {
 
 	lines := app.renderSettingsBody(80, 18)
 	joined := strings.Join(lines, "\n")
-	for _, label := range []string{"url", "api_key", "interval", "timeout", "mode", "realtime_points", "chart_y_axis", "ascii", "no_color", "warn_cpu", "warn_ram", "warn_disk", "warn_expiry_days", "about"} {
+	for _, label := range []string{"profile", "rename_profile", "site", "url", "api_key", "interval", "timeout", "mode", "realtime_window", "chart_y_axis", "ascii", "no_color", "warn_cpu", "warn_ram", "warn_disk", "warn_expiry_days", "about"} {
 		if !strings.Contains(joined, label) {
 			t.Fatalf("settings body missing %s: %#v", label, lines)
 		}
@@ -31,21 +31,21 @@ func TestSettingsKeyOpensSettingsPage(t *testing.T) {
 }
 
 func TestSettingsItemsIncludeAllConfigFields(t *testing.T) {
-	app := NewWithOptions(nil, Options{URL: "https://komari.example.com", APIKey: "secret"})
+	app := NewWithOptions(nil, Options{Profile: "default", URL: "https://komari.example.com", APIKey: "secret"})
 	items := app.settingsItems()
 	got := make([]string, 0, len(items))
 	for _, item := range items {
 		got = append(got, item.Label)
 	}
-	want := []string{"url", "api_key", "interval", "timeout", "mode", "realtime_points", "chart_y_axis", "ascii", "no_color", "warn_cpu", "warn_ram", "warn_disk", "warn_expiry_days", "about"}
+	want := []string{"profile", "rename_profile", "site", "url", "api_key", "interval", "timeout", "mode", "realtime_window", "chart_y_axis", "ascii", "no_color", "warn_cpu", "warn_ram", "warn_disk", "warn_expiry_days", "about"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("settings labels = %#v, want %#v", got, want)
 	}
-	if items[0].Value != "https://komari.example.com" || items[1].Value != "********" {
-		t.Fatalf("URL/API display = %q/%q", items[0].Value, items[1].Value)
+	if items[0].Value != "default" || items[3].Value != "https://komari.example.com" || items[4].Value != "********" {
+		t.Fatalf("profile/URL/API display = %q/%q/%q", items[0].Value, items[3].Value, items[4].Value)
 	}
-	if !items[0].ReadOnly || !items[1].ReadOnly {
-		t.Fatalf("URL/API should be marked read-only: %#v %#v", items[0], items[1])
+	if !items[2].ReadOnly || !items[3].ReadOnly || !items[4].ReadOnly {
+		t.Fatalf("site/URL/API should be marked read-only: %#v %#v %#v", items[2], items[3], items[4])
 	}
 }
 
@@ -194,7 +194,7 @@ func TestSettingsBodyContainsCoreEditableItems(t *testing.T) {
 	app := NewWithOptions(nil, Options{ASCII: true})
 	lines := app.renderSettingsBody(80, 12)
 	joined := strings.Join(lines, "\n")
-	if !strings.Contains(joined, "realtime_points") || !strings.Contains(joined, "chart_y_axis") {
+	if !strings.Contains(joined, "realtime_window") || !strings.Contains(joined, "chart_y_axis") {
 		t.Fatalf("settings body missing items: %#v", lines)
 	}
 }
@@ -247,18 +247,18 @@ func TestSettingsBackRestoresDetailLayer(t *testing.T) {
 	}
 }
 
-func TestSettingsAdjustRealtimePointsAndYAxisMode(t *testing.T) {
+func TestSettingsAdjustRealtimeWindowAndYAxisMode(t *testing.T) {
 	app := NewWithOptions(nil, Options{RefreshInterval: 2 * time.Second})
 	app.settings = true
 
-	selectSetting(t, app, "realtime_points")
+	selectSetting(t, app, "realtime_window")
 	app.handleSettingsKey(keyEvent{name: "tab-right"})
-	if app.realtimePoints != 30 {
-		t.Fatalf("realtimePoints = %d, want 30", app.realtimePoints)
+	if app.realtimeWindow != 5*time.Minute {
+		t.Fatalf("realtimeWindow = %s, want 5m", app.realtimeWindow)
 	}
 	app.handleSettingsKey(keyEvent{name: "tab-left"})
-	if app.realtimePoints != 0 {
-		t.Fatalf("realtimePoints = %d, want auto", app.realtimePoints)
+	if app.realtimeWindow != time.Minute {
+		t.Fatalf("realtimeWindow = %s, want 1m", app.realtimeWindow)
 	}
 
 	selectSetting(t, app, "chart_y_axis")
@@ -269,6 +269,94 @@ func TestSettingsAdjustRealtimePointsAndYAxisMode(t *testing.T) {
 	app.handleSettingsKey(keyEvent{name: "open"})
 	if app.chartYAxisMode != chartYAxisAbsolute {
 		t.Fatalf("chartYAxisMode = %s, want absolute", app.chartYAxisMode)
+	}
+}
+
+func TestSettingsAdjustProfileSwitchesConnection(t *testing.T) {
+	var saved PersistentSettings
+	app := NewWithOptions(nil, Options{
+		Profile: "default",
+		URL:     "https://default.example.com",
+		APIKey:  "default-key",
+		Profiles: []ConnectionProfile{
+			{Name: "default", URL: "https://default.example.com", APIKey: "default-key"},
+			{Name: "lab", URL: "https://lab.example.com", APIKey: "lab-key"},
+		},
+		SaveSettings: func(settings PersistentSettings) error {
+			saved = settings
+			return nil
+		},
+	})
+	app.settings = true
+	app.snapshot = komari.Snapshot{
+		Nodes:  []komari.Node{{UUID: "node-1", Name: "node"}},
+		Public: komari.PublicInfo{SiteName: "Default"},
+	}
+	app.nodeDetail[detailKey{UUID: "node-1"}] = nodeDetail{UUID: "node-1"}
+	app.realtimeStatus["node-1"] = []komari.Status{{CPU: 10}}
+	selectSetting(t, app, "profile")
+
+	app.handleSettingsKey(keyEvent{name: "tab-right"})
+
+	if app.profileName != "lab" || app.settingsURL != "https://lab.example.com" || app.settingsAPIKey != "lab-key" {
+		t.Fatalf("profile = %q url=%q api=%q", app.profileName, app.settingsURL, app.settingsAPIKey)
+	}
+	if app.client == nil || app.client.BaseURL() != "https://lab.example.com" {
+		t.Fatalf("client URL = %v", app.client)
+	}
+	if saved.Profile != "lab" {
+		t.Fatalf("saved Profile = %q, want lab", saved.Profile)
+	}
+	if len(app.snapshot.Nodes) != 0 || len(app.nodeDetail) != 0 || len(app.realtimeStatus) != 0 {
+		t.Fatalf("old site state was not cleared: nodes=%d detail=%d realtime=%d", len(app.snapshot.Nodes), len(app.nodeDetail), len(app.realtimeStatus))
+	}
+	if !app.loading || app.connectionVersion != 1 {
+		t.Fatalf("loading=%t connectionVersion=%d, want loading true version 1", app.loading, app.connectionVersion)
+	}
+	select {
+	case <-app.refreshCh:
+	default:
+		t.Fatal("profile switch should request a refresh")
+	}
+}
+
+func TestSettingsRenameProfile(t *testing.T) {
+	var saved PersistentSettings
+	app := NewWithOptions(nil, Options{
+		Profile: "default",
+		URL:     "https://default.example.com",
+		Profiles: []ConnectionProfile{
+			{Name: "default", URL: "https://default.example.com"},
+			{Name: "lab", URL: "https://lab.example.com"},
+		},
+		SaveSettings: func(settings PersistentSettings) error {
+			saved = settings
+			return nil
+		},
+	})
+	app.settings = true
+	selectSetting(t, app, "rename_profile")
+
+	app.handleSettingsKey(keyEvent{name: "open"})
+	for range "default" {
+		app.handleSettingsKey(keyEvent{name: "backspace"})
+	}
+	for _, r := range "primary" {
+		app.handleSettingsKey(keyEvent{name: "char", text: string(r)})
+	}
+	app.handleSettingsKey(keyEvent{name: "open"})
+
+	if app.profileName != "primary" {
+		t.Fatalf("profileName = %q, want primary", app.profileName)
+	}
+	if app.profiles[0].Name != "primary" {
+		t.Fatalf("profiles = %#v, want first profile renamed", app.profiles)
+	}
+	if saved.RenameProfileFrom != "default" || saved.Profile != "primary" {
+		t.Fatalf("saved rename = %q -> %q", saved.RenameProfileFrom, saved.Profile)
+	}
+	if app.settingsRenamingProfile || app.settingsProfileDraft != "" {
+		t.Fatalf("rename state not cleared: renaming=%t draft=%q", app.settingsRenamingProfile, app.settingsProfileDraft)
 	}
 }
 
@@ -286,6 +374,9 @@ func TestSettingsPersistAfterAdjustment(t *testing.T) {
 	app.handleSettingsKey(keyEvent{name: "open"})
 	if saved.ChartYAxisMode != "relative" {
 		t.Fatalf("saved ChartYAxisMode = %q, want relative", saved.ChartYAxisMode)
+	}
+	if saved.RealtimeWindow != "1m" {
+		t.Fatalf("saved RealtimeWindow = %q, want 1m", saved.RealtimeWindow)
 	}
 	if app.settingsStatus != "saved" {
 		t.Fatalf("settingsStatus = %q, want saved", app.settingsStatus)

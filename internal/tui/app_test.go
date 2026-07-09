@@ -27,8 +27,8 @@ func TestNewWithOptionsTimeoutDefaults(t *testing.T) {
 	if app.detailCacheTTL != defaultDetailCacheTTL {
 		t.Fatalf("detailCacheTTL = %s, want %s", app.detailCacheTTL, defaultDetailCacheTTL)
 	}
-	if app.realtimePoints != 0 {
-		t.Fatalf("realtimePoints = %d, want auto", app.realtimePoints)
+	if app.realtimeWindow != defaultRealtimeWindowDuration {
+		t.Fatalf("realtimeWindow = %s, want %s", app.realtimeWindow, defaultRealtimeWindowDuration)
 	}
 }
 
@@ -38,7 +38,7 @@ func TestNewWithOptionsUsesTimeoutOptions(t *testing.T) {
 		FetchTimeout:    3 * time.Second,
 		DetailTimeout:   4 * time.Second,
 		DetailCacheTTL:  5 * time.Second,
-		RealtimePoints:  150,
+		RealtimeWindow:  5 * time.Minute,
 	})
 
 	if app.refreshInterval != 2*time.Second {
@@ -53,8 +53,8 @@ func TestNewWithOptionsUsesTimeoutOptions(t *testing.T) {
 	if app.detailCacheTTL != 5*time.Second {
 		t.Fatalf("detailCacheTTL = %s", app.detailCacheTTL)
 	}
-	if app.realtimePoints != 150 {
-		t.Fatalf("realtimePoints = %d", app.realtimePoints)
+	if app.realtimeWindow != 5*time.Minute {
+		t.Fatalf("realtimeWindow = %s", app.realtimeWindow)
 	}
 }
 
@@ -289,38 +289,10 @@ func TestRealtimeSampleUsesIntervalClockWhenStatusHasNoRecordTime(t *testing.T) 
 }
 
 func TestRealtimeSampleLimitUsesRefreshInterval(t *testing.T) {
-	app := NewWithOptions(nil, Options{RefreshInterval: 2 * time.Second})
+	app := NewWithOptions(nil, Options{RefreshInterval: 2 * time.Second, RealtimeWindow: 5 * time.Minute})
 
-	if got, want := app.maxRealtimeSamples(), 30; got != want {
+	if got, want := app.maxRealtimeSamples(), 150; got != want {
 		t.Fatalf("maxRealtimeSamples = %d, want %d", got, want)
-	}
-}
-
-func TestRealtimeSampleLimitCanUseConfiguredPoints(t *testing.T) {
-	app := NewWithOptions(nil, Options{
-		RefreshInterval: 20 * time.Second,
-		RealtimePoints:  5,
-	})
-	node := komari.Node{UUID: "node-1", Name: "node"}
-	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
-
-	for i := 0; i < 6; i++ {
-		sampleTime := now.Add(time.Duration(i) * app.refreshInterval)
-		app.recordRealtimeSnapshot(komari.Snapshot{
-			Nodes: []komari.Node{node},
-			Status: map[string]komari.Status{node.UUID: {
-				CPU: float64(i + 1),
-			}},
-			FetchedAt: sampleTime,
-		}, sampleTime)
-	}
-
-	records := app.realtimeRecords(node.UUID, nil, komari.Status{})
-	if len(records) != 5 {
-		t.Fatalf("records len = %d, want 5", len(records))
-	}
-	if got := statusValues(records, func(st komari.Status) float64 { return st.CPU }); !sameFloatSlice(got, []float64{2, 3, 4, 5, 6}) {
-		t.Fatalf("values = %#v, want [2 3 4 5 6]", got)
 	}
 }
 

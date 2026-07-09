@@ -66,6 +66,7 @@ func (a *App) aboutContentLines(width int) []string {
 	addKV("platform", runtime.GOOS+"/"+runtime.GOARCH)
 
 	addSection("Komari")
+	addKV("profile", valueOr(a.profileName, "-"))
 	addKV("site", valueOr(a.text(a.snapshot.Public.SiteName), "-"))
 	addKV("url", valueOr(a.settingsURL, valueOr(a.snapshot.SourceURL, "-")))
 	addKV("auth", a.authText())
@@ -86,7 +87,7 @@ func (a *App) aboutContentLines(width int) []string {
 	addKV("ascii", boolText(a.style.ASCII))
 	addKV("no_color", boolText(a.style.NoColor))
 	addKV("chart_y_axis", a.chartYAxisModeText())
-	addKV("realtime_points", a.realtimePointsText())
+	addKV("realtime_window", a.realtimeWindowText())
 	addKV("warnings", fmt.Sprintf("cpu %.0f%%  ram %.0f%%  disk %.0f%%  expiry %dd", a.warnCPU, a.warnRAM, a.warnDisk, a.warnExpiryDays))
 
 	addSection("ktui Update")

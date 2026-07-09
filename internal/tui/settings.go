@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
+
+	"ktui/internal/komari"
 )
 
 type settingsItem struct {
@@ -16,12 +19,15 @@ type settingsItem struct {
 type settingsItemKind int
 
 const (
-	settingsURL settingsItemKind = iota
+	settingsProfile settingsItemKind = iota
+	settingsRenameProfile
+	settingsSite
+	settingsURL
 	settingsAPIKey
 	settingsInterval
 	settingsTimeout
 	settingsMode
-	settingsRealtimePoints
+	settingsRealtimeWindow
 	settingsChartYAxis
 	settingsASCII
 	settingsNoColor
@@ -83,12 +89,15 @@ func (a *App) renderSettingsBody(width int, bodyHeight int) []string {
 
 func (a *App) settingsItems() []settingsItem {
 	return []settingsItem{
+		{Label: "profile", Value: a.profileSettingText(), Kind: settingsProfile, ReadOnly: len(a.profiles) <= 1},
+		{Label: "rename_profile", Value: valueOr(a.profileName, "-"), Kind: settingsRenameProfile},
+		{Label: "site", Value: valueOr(a.text(a.snapshot.Public.SiteName), "-"), Kind: settingsSite, ReadOnly: true},
 		{Label: "url", Value: valueOr(a.settingsURL, "-"), Kind: settingsURL, ReadOnly: true},
 		{Label: "api_key", Value: maskedValue(a.settingsAPIKey), Kind: settingsAPIKey, ReadOnly: true},
 		{Label: "interval", Value: a.refreshInterval.String(), Kind: settingsInterval},
 		{Label: "timeout", Value: a.fetchTimeout.String(), Kind: settingsTimeout},
 		{Label: "mode", Value: string(a.mode), Kind: settingsMode},
-		{Label: "realtime_points", Value: a.realtimePointsText(), Kind: settingsRealtimePoints},
+		{Label: "realtime_window", Value: a.realtimeWindowText(), Kind: settingsRealtimeWindow},
 		{Label: "chart_y_axis", Value: a.chartYAxisModeText(), Kind: settingsChartYAxis},
 		{Label: "ascii", Value: boolText(a.style.ASCII), Kind: settingsASCII},
 		{Label: "no_color", Value: boolText(a.style.NoColor), Kind: settingsNoColor},
@@ -100,11 +109,94 @@ func (a *App) settingsItems() []settingsItem {
 	}
 }
 
-func (a *App) realtimePointsText() string {
-	if a.realtimePoints <= 0 {
-		return fmt.Sprintf("auto (%d)", a.maxRealtimeSamples())
+func (a *App) realtimeWindowText() string {
+	return realtimeWindowText(a.realtimeWindowDuration())
+}
+
+func (a *App) profileSettingText() string {
+	if len(a.profiles) <= 1 {
+		return valueOr(a.profileName, "-")
 	}
-	return fmt.Sprintf("%d", a.realtimePoints)
+	return fmt.Sprintf("%s (%d/%d)", valueOr(a.profileName, "-"), a.profileIndex()+1, len(a.profiles))
+}
+
+func (a *App) profileIndex() int {
+	for i, profile := range a.profiles {
+		if profile.Name == a.profileName {
+			return i
+		}
+	}
+	return 0
+}
+
+func (a *App) adjustSelectedProfile(delta int) {
+	if len(a.profiles) <= 1 {
+		a.settingsStatus = "read only"
+		return
+	}
+	if delta == 0 {
+		delta = 1
+	}
+	current := a.profileIndex()
+	next := (current + delta) % len(a.profiles)
+	if next < 0 {
+		next += len(a.profiles)
+	}
+	if next == current {
+		return
+	}
+	if err := a.switchProfile(a.profiles[next]); err != nil {
+		a.settingsStatus = "profile failed: " + err.Error()
+		return
+	}
+	a.persistSettings()
+}
+
+func (a *App) switchProfile(profile ConnectionProfile) error {
+	profile.Name = strings.TrimSpace(profile.Name)
+	profile.URL = strings.TrimSpace(profile.URL)
+	profile.APIKey = strings.TrimSpace(profile.APIKey)
+	if profile.Name == "" {
+		return fmt.Errorf("profile name is empty")
+	}
+	client, err := komari.NewClientWithOptions(profile.URL, komari.Options{APIKey: profile.APIKey, Timeout: a.fetchTimeout})
+	if err != nil {
+		return err
+	}
+	a.connectionVersion++
+	a.client = client
+	a.profileName = profile.Name
+	a.settingsURL = client.BaseURL()
+	a.settingsAPIKey = profile.APIKey
+	if index := a.profileIndex(); index >= 0 && index < len(a.profiles) {
+		a.profiles[index].URL = client.BaseURL()
+		a.profiles[index].APIKey = profile.APIKey
+	}
+	a.selected = 0
+	a.listScroll = 0
+	a.detailScroll = 0
+	a.aboutScroll = 0
+	a.detail = false
+	a.chartFocus = false
+	a.searchEditing = false
+	a.searchQuery = ""
+	a.searchDraft = ""
+	a.searchAnchorUUID = ""
+	a.nodeFilter = nodeFilterAll
+	a.nodeSort = nodeSortDefault
+	a.snapshot = komari.Snapshot{}
+	a.err = nil
+	a.loading = true
+	a.fetching = false
+	a.refreshPending = false
+	a.komariUpdate = komariUpdateState{}
+	a.lastFullFetch = time.Time{}
+	a.realtimeNow = time.Time{}
+	a.nodeDetail = map[detailKey]nodeDetail{}
+	a.realtimeStatus = map[string][]komari.Status{}
+	a.invalidateViewNodesCache()
+	a.requestFullRefresh()
+	return nil
 }
 
 func (a *App) chartYAxisModeText() string {
@@ -187,9 +279,13 @@ func (a *App) adjustSelectedSetting(delta int) {
 		return
 	}
 	switch items[a.settingsSelected].Kind {
-	case settingsURL, settingsAPIKey:
+	case settingsSite, settingsURL, settingsAPIKey:
 		a.settingsStatus = "read only"
 		return
+	case settingsProfile:
+		a.adjustSelectedProfile(delta)
+	case settingsRenameProfile:
+		a.beginRenameProfile()
 	case settingsInterval:
 		next := adjustedDuration(a.refreshInterval, []time.Duration{
 			2 * time.Second,
@@ -219,8 +315,8 @@ func (a *App) adjustSelectedSetting(delta int) {
 		} else {
 			a.mode = ModeLine
 		}
-	case settingsRealtimePoints:
-		a.realtimePoints = adjustedRealtimePoints(a.realtimePoints, delta)
+	case settingsRealtimeWindow:
+		a.realtimeWindow = adjustedRealtimeWindow(a.realtimeWindowDuration(), delta)
 	case settingsChartYAxis:
 		a.toggleChartYAxisMode()
 	case settingsASCII:
@@ -242,29 +338,140 @@ func (a *App) adjustSelectedSetting(delta int) {
 	a.persistSettings()
 }
 
+func (a *App) beginRenameProfile() {
+	if strings.TrimSpace(a.profileName) == "" {
+		a.settingsStatus = "rename failed: profile name is empty"
+		return
+	}
+	a.settingsRenamingProfile = true
+	a.settingsProfileDraft = a.profileName
+	a.updateRenameProfileStatus()
+}
+
+func (a *App) updateRenameProfileStatus() {
+	a.settingsStatus = "rename profile: " + valueOr(a.settingsProfileDraft, "_") + "  Enter save  Esc cancel"
+}
+
+func (a *App) handleRenameProfileKey(key keyEvent) {
+	switch key.name {
+	case "force-quit":
+		a.quit = true
+	case "open":
+		if key.text != "" {
+			a.settingsProfileDraft += key.text
+			a.updateRenameProfileStatus()
+			return
+		}
+		a.finishRenameProfile()
+	case "back":
+		if key.text != "" {
+			a.settingsProfileDraft += key.text
+			a.updateRenameProfileStatus()
+			return
+		}
+		a.settingsRenamingProfile = false
+		a.settingsProfileDraft = ""
+		a.settingsStatus = "rename canceled"
+	case "backspace":
+		a.settingsProfileDraft = dropLastRune(a.settingsProfileDraft)
+		a.updateRenameProfileStatus()
+	default:
+		if key.text != "" {
+			a.settingsProfileDraft += key.text
+			a.updateRenameProfileStatus()
+		}
+	}
+}
+
+func (a *App) finishRenameProfile() {
+	oldName := strings.TrimSpace(a.profileName)
+	newName := strings.TrimSpace(a.settingsProfileDraft)
+	if newName == "" {
+		a.settingsStatus = "rename failed: profile name is required"
+		return
+	}
+	if !validProfileNameText(newName) {
+		a.settingsStatus = "rename failed: use a name without spaces or slashes"
+		return
+	}
+	if newName == oldName {
+		a.settingsRenamingProfile = false
+		a.settingsProfileDraft = ""
+		a.settingsStatus = "rename unchanged"
+		return
+	}
+	for _, profile := range a.profiles {
+		if profile.Name == newName {
+			a.settingsStatus = "rename failed: profile already exists"
+			return
+		}
+	}
+	settings := a.currentPersistentSettings(oldName)
+	settings.Profile = newName
+	if err := a.savePersistentSettings(settings); err != nil {
+		a.settingsStatus = "save failed: " + err.Error()
+		return
+	}
+	for i := range a.profiles {
+		if a.profiles[i].Name == oldName {
+			a.profiles[i].Name = newName
+			break
+		}
+	}
+	a.profileName = newName
+	a.settingsRenamingProfile = false
+	a.settingsProfileDraft = ""
+	a.settingsStatus = "renamed"
+}
+
+func validProfileNameText(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsSpace(r) || r == '/' || r == '\\' {
+			return false
+		}
+	}
+	return true
+}
+
 func (a *App) persistSettings() {
 	if a.saveSettings == nil {
 		a.settingsStatus = "runtime only"
 		return
 	}
-	err := a.saveSettings(PersistentSettings{
-		Interval:       a.refreshInterval.String(),
-		Timeout:        a.fetchTimeout.String(),
-		Mode:           string(a.mode),
-		RealtimePoints: a.realtimePoints,
-		ChartYAxisMode: string(a.chartYAxisMode),
-		ASCII:          a.style.ASCII,
-		NoColor:        a.style.NoColor,
-		WarnCPU:        a.warnCPU,
-		WarnRAM:        a.warnRAM,
-		WarnDisk:       a.warnDisk,
-		WarnExpiryDays: a.warnExpiryDays,
-	})
-	if err != nil {
+	if err := a.savePersistentSettings(a.currentPersistentSettings("")); err != nil {
 		a.settingsStatus = "save failed: " + err.Error()
 		return
 	}
 	a.settingsStatus = "saved"
+}
+
+func (a *App) currentPersistentSettings(renameFrom string) PersistentSettings {
+	return PersistentSettings{
+		Profile:           a.profileName,
+		RenameProfileFrom: renameFrom,
+		Interval:          a.refreshInterval.String(),
+		Timeout:           a.fetchTimeout.String(),
+		Mode:              string(a.mode),
+		RealtimeWindow:    realtimeWindowText(a.realtimeWindowDuration()),
+		ChartYAxisMode:    string(a.chartYAxisMode),
+		ASCII:             a.style.ASCII,
+		NoColor:           a.style.NoColor,
+		WarnCPU:           a.warnCPU,
+		WarnRAM:           a.warnRAM,
+		WarnDisk:          a.warnDisk,
+		WarnExpiryDays:    a.warnExpiryDays,
+	}
+}
+
+func (a *App) savePersistentSettings(settings PersistentSettings) error {
+	if a.saveSettings == nil {
+		return nil
+	}
+	return a.saveSettings(settings)
 }
 
 func adjustedDuration(current time.Duration, presets []time.Duration, delta int) time.Duration {
@@ -290,25 +497,25 @@ func adjustedDuration(current time.Duration, presets []time.Duration, delta int)
 	return presets[0]
 }
 
-func adjustedRealtimePoints(current int, delta int) int {
-	presets := []int{0, 30, 60, 120, 150, 300, 600, 1200}
-	if delta == 0 {
-		delta = 1
+func adjustedRealtimeWindow(current time.Duration, delta int) time.Duration {
+	return adjustedDuration(current, []time.Duration{
+		time.Minute,
+		5 * time.Minute,
+		10 * time.Minute,
+	}, delta)
+}
+
+func realtimeWindowText(value time.Duration) string {
+	switch value {
+	case time.Minute:
+		return "1m"
+	case 5 * time.Minute:
+		return "5m"
+	case 10 * time.Minute:
+		return "10m"
+	default:
+		return "1m"
 	}
-	if delta > 0 {
-		for _, preset := range presets {
-			if preset > current {
-				return preset
-			}
-		}
-		return presets[len(presets)-1]
-	}
-	for i := len(presets) - 1; i >= 0; i-- {
-		if presets[i] < current {
-			return presets[i]
-		}
-	}
-	return presets[0]
 }
 
 func adjustedPercent(current float64, delta int) float64 {

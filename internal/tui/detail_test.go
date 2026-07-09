@@ -499,11 +499,11 @@ func TestRealtimeChartPointsMoveLeftAsWindowClockAdvances(t *testing.T) {
 }
 
 func TestRealtimeMetricChartUsesFixedTimeWindow(t *testing.T) {
-	app := NewWithOptions(nil, Options{ASCII: true})
+	app := NewWithOptions(nil, Options{ASCII: true, RealtimeWindow: 5 * time.Minute})
 	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
 	app.advanceRealtimeNow(now.Add(10 * time.Second))
 	records := []komari.Status{
-		{CPU: 10, Time: komari.NullTime{Time: now.Add(-30 * time.Second), Valid: true}},
+		{CPU: 10, Time: komari.NullTime{Time: now.Add(-3 * time.Minute), Valid: true}},
 		{CPU: 20, Time: komari.NullTime{Time: now, Valid: true}},
 	}
 
@@ -511,13 +511,13 @@ func TestRealtimeMetricChartUsesFixedTimeWindow(t *testing.T) {
 	if section.Chart == nil {
 		t.Fatal("missing chart")
 	}
-	if section.Chart.Window != realtimeWindowDuration {
-		t.Fatalf("chart Window = %s, want %s", section.Chart.Window, realtimeWindowDuration)
+	if section.Chart.Window != 5*time.Minute {
+		t.Fatalf("chart Window = %s, want 5m", section.Chart.Window)
 	}
 	if !section.Chart.Until.Equal(now.Add(10 * time.Second)) {
 		t.Fatalf("chart Until = %s, want %s", section.Chart.Until, now.Add(10*time.Second))
 	}
-	if section.Chart.From != chartRealtimeTimeLabelFromTime(now.Add(10*time.Second).Add(-realtimeWindowDuration)) {
+	if section.Chart.From != chartRealtimeTimeLabelFromTime(now.Add(10*time.Second).Add(-5*time.Minute)) {
 		t.Fatalf("chart From = %q", section.Chart.From)
 	}
 	if section.Chart.To != chartRealtimeTimeLabelFromTime(now.Add(10*time.Second)) {

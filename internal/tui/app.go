@@ -11,11 +11,14 @@ import (
 
 type App struct {
 	client            *komari.Client
+	profileName       string
+	profiles          []ConnectionProfile
+	connectionVersion int
 	refreshInterval   time.Duration
 	fetchTimeout      time.Duration
 	detailTimeout     time.Duration
 	detailCacheTTL    time.Duration
-	realtimePoints    int
+	realtimeWindow    time.Duration
 	saveSettings      func(PersistentSettings) error
 	checkUpdate       func(context.Context) (UpdateCheckResult, error)
 	checkKomariUpdate func(context.Context, string) (KomariUpdateCheckResult, error)
@@ -25,39 +28,41 @@ type App struct {
 	style             Style
 	mode              Mode
 
-	selected          int
-	listScroll        int
-	detailScroll      int
-	settingsScroll    int
-	aboutScroll       int
-	tab               int
-	window            int
-	detail            bool
-	chartFocus        bool
-	chartFocusIndex   int
-	settings          bool
-	about             bool
-	cardStep          int
-	settingsWasDetail bool
-	settingsSelected  int
-	settingsStatus    string
-	settingsURL       string
-	settingsAPIKey    string
-	aboutWasDetail    bool
-	aboutWasSettings  bool
-	aboutWasChart     bool
-	chartYAxisMode    chartYAxisMode
-	warnCPU           float64
-	warnRAM           float64
-	warnDisk          float64
-	warnExpiryDays    int
-	searchEditing     bool
-	searchQuery       string
-	searchDraft       string
-	searchAnchorUUID  string
-	nodeFilter        nodeFilterMode
-	nodeSort          nodeSortMode
-	notice            string
+	selected                int
+	listScroll              int
+	detailScroll            int
+	settingsScroll          int
+	aboutScroll             int
+	tab                     int
+	window                  int
+	detail                  bool
+	chartFocus              bool
+	chartFocusIndex         int
+	settings                bool
+	about                   bool
+	cardStep                int
+	settingsWasDetail       bool
+	settingsSelected        int
+	settingsStatus          string
+	settingsRenamingProfile bool
+	settingsProfileDraft    string
+	settingsURL             string
+	settingsAPIKey          string
+	aboutWasDetail          bool
+	aboutWasSettings        bool
+	aboutWasChart           bool
+	chartYAxisMode          chartYAxisMode
+	warnCPU                 float64
+	warnRAM                 float64
+	warnDisk                float64
+	warnExpiryDays          int
+	searchEditing           bool
+	searchQuery             string
+	searchDraft             string
+	searchAnchorUUID        string
+	nodeFilter              nodeFilterMode
+	nodeSort                nodeSortMode
+	notice                  string
 
 	frameCache  []string
 	frameWidth  int
@@ -92,13 +97,15 @@ type App struct {
 }
 
 type Options struct {
+	Profile           string
+	Profiles          []ConnectionProfile
 	URL               string
 	APIKey            string
 	RefreshInterval   time.Duration
 	FetchTimeout      time.Duration
 	DetailTimeout     time.Duration
 	DetailCacheTTL    time.Duration
-	RealtimePoints    int
+	RealtimeWindow    time.Duration
 	ChartYAxisMode    string
 	WarnCPU           float64
 	WarnRAM           float64
@@ -113,6 +120,12 @@ type Options struct {
 	ASCII             bool
 	NoColor           bool
 	Mode              Mode
+}
+
+type ConnectionProfile struct {
+	Name   string
+	URL    string
+	APIKey string
 }
 
 type UpdateCheckResult struct {
@@ -131,17 +144,19 @@ type KomariUpdateCheckResult struct {
 }
 
 type PersistentSettings struct {
-	Interval       string
-	Timeout        string
-	Mode           string
-	RealtimePoints int
-	ChartYAxisMode string
-	ASCII          bool
-	NoColor        bool
-	WarnCPU        float64
-	WarnRAM        float64
-	WarnDisk       float64
-	WarnExpiryDays int
+	Profile           string
+	RenameProfileFrom string
+	Interval          string
+	Timeout           string
+	Mode              string
+	RealtimeWindow    string
+	ChartYAxisMode    string
+	ASCII             bool
+	NoColor           bool
+	WarnCPU           float64
+	WarnRAM           float64
+	WarnDisk          float64
+	WarnExpiryDays    int
 }
 
 type Mode string
@@ -190,14 +205,16 @@ type nodeDetail struct {
 }
 
 type fetchResult struct {
-	snapshot komari.Snapshot
-	err      error
-	full     bool
+	snapshot          komari.Snapshot
+	err               error
+	full              bool
+	connectionVersion int
 }
 
 type detailResult struct {
-	key    detailKey
-	detail nodeDetail
+	key               detailKey
+	detail            nodeDetail
+	connectionVersion int
 }
 
 type updateResult struct {
@@ -206,8 +223,9 @@ type updateResult struct {
 }
 
 type komariUpdateResult struct {
-	result KomariUpdateCheckResult
-	err    error
+	result            KomariUpdateCheckResult
+	err               error
+	connectionVersion int
 }
 
 type updateState struct {
@@ -277,13 +295,13 @@ type axisSeries struct {
 const detailCardHeight = 7
 
 const (
-	defaultRefreshInterval = 5 * time.Second
-	defaultFetchTimeout    = 15 * time.Second
-	defaultDetailTimeout   = 20 * time.Second
-	defaultDetailCacheTTL  = 45 * time.Second
-	fullRefreshInterval    = 60 * time.Second
-	realtimeWindowDuration = time.Minute
-	maxRealtimeSamplesCap  = 1200
+	defaultRefreshInterval        = 5 * time.Second
+	defaultFetchTimeout           = 15 * time.Second
+	defaultDetailTimeout          = 20 * time.Second
+	defaultDetailCacheTTL         = 45 * time.Second
+	fullRefreshInterval           = 60 * time.Second
+	defaultRealtimeWindowDuration = time.Minute
+	maxRealtimeSamplesCap         = 1200
 )
 
 var detailWindows = []detailWindow{
@@ -311,6 +329,9 @@ func NewWithOptions(client *komari.Client, opts Options) *App {
 	if opts.DetailCacheTTL <= 0 {
 		opts.DetailCacheTTL = defaultDetailCacheTTL
 	}
+	if opts.RealtimeWindow <= 0 {
+		opts.RealtimeWindow = defaultRealtimeWindowDuration
+	}
 	chartYAxisMode := chartYAxisAbsolute
 	if opts.ChartYAxisMode == string(chartYAxisRelative) {
 		chartYAxisMode = chartYAxisRelative
@@ -318,6 +339,11 @@ func NewWithOptions(client *komari.Client, opts Options) *App {
 	if opts.Mode == "" {
 		opts.Mode = ModeSheet
 	}
+	opts.Profile = strings.TrimSpace(opts.Profile)
+	if opts.Profile == "" {
+		opts.Profile = "default"
+	}
+	opts.Profiles = normalizedConnectionProfiles(opts.Profile, opts.URL, opts.APIKey, opts.Profiles)
 	if opts.Version == "" {
 		opts.Version = "dev"
 	}
@@ -341,11 +367,13 @@ func NewWithOptions(client *komari.Client, opts Options) *App {
 	}
 	return &App{
 		client:            client,
+		profileName:       opts.Profile,
+		profiles:          opts.Profiles,
 		refreshInterval:   opts.RefreshInterval,
 		fetchTimeout:      opts.FetchTimeout,
 		detailTimeout:     opts.DetailTimeout,
 		detailCacheTTL:    opts.DetailCacheTTL,
-		realtimePoints:    opts.RealtimePoints,
+		realtimeWindow:    opts.RealtimeWindow,
 		checkUpdate:       opts.CheckUpdate,
 		checkKomariUpdate: opts.CheckKomariUpdate,
 		appVersion:        opts.Version,
@@ -374,6 +402,39 @@ func NewWithOptions(client *komari.Client, opts Options) *App {
 		chartYAxisMode:    chartYAxisMode,
 		saveSettings:      opts.SaveSettings,
 	}
+}
+
+func normalizedConnectionProfiles(current string, url string, apiKey string, profiles []ConnectionProfile) []ConnectionProfile {
+	current = strings.TrimSpace(current)
+	if current == "" {
+		current = "default"
+	}
+	out := make([]ConnectionProfile, 0, len(profiles)+1)
+	seen := map[string]int{}
+	for _, profile := range profiles {
+		profile.Name = strings.TrimSpace(profile.Name)
+		profile.URL = strings.TrimSpace(profile.URL)
+		profile.APIKey = strings.TrimSpace(profile.APIKey)
+		if profile.Name == "" {
+			continue
+		}
+		if index, ok := seen[profile.Name]; ok {
+			out[index] = profile
+			continue
+		}
+		seen[profile.Name] = len(out)
+		out = append(out, profile)
+	}
+	currentProfile := ConnectionProfile{Name: current, URL: strings.TrimSpace(url), APIKey: strings.TrimSpace(apiKey)}
+	if index, ok := seen[current]; ok {
+		if currentProfile.URL != "" {
+			out[index].URL = currentProfile.URL
+		}
+		out[index].APIKey = currentProfile.APIKey
+	} else {
+		out = append([]ConnectionProfile{currentProfile}, out...)
+	}
+	return out
 }
 
 func (a *App) Run(ctx context.Context) error {
@@ -415,6 +476,9 @@ func (a *App) Run(ctx context.Context) error {
 		case <-a.refreshCh:
 			a.fetch(ctx)
 		case result := <-a.resultCh:
+			if result.connectionVersion != a.connectionVersion {
+				continue
+			}
 			pending := a.refreshPending
 			selectedUUID := a.selectedNodeUUID()
 			a.refreshPending = false
@@ -441,6 +505,9 @@ func (a *App) Run(ctx context.Context) error {
 				a.requestRefresh()
 			}
 		case detail := <-a.detailCh:
+			if detail.connectionVersion != a.connectionVersion {
+				continue
+			}
 			a.nodeDetail[detail.key] = detail.detail
 			a.render()
 		case update := <-a.updateCh:
@@ -457,6 +524,9 @@ func (a *App) Run(ctx context.Context) error {
 			}
 			a.render()
 		case update := <-a.komariUpdateCh:
+			if update.connectionVersion != a.connectionVersion {
+				continue
+			}
 			a.applyKomariUpdateResult(update)
 			a.render()
 		case key := <-a.keyCh:
@@ -481,10 +551,11 @@ func (a *App) maybeStartKomariUpdateCheck(ctx context.Context) {
 		return
 	}
 	a.komariUpdate = komariUpdateState{Checking: true, Current: current}
+	connectionVersion := a.connectionVersion
 	go func() {
 		result, err := a.checkKomariUpdate(ctx, current)
 		select {
-		case a.komariUpdateCh <- komariUpdateResult{result: result, err: err}:
+		case a.komariUpdateCh <- komariUpdateResult{result: result, err: err, connectionVersion: connectionVersion}:
 		case <-ctx.Done():
 		}
 	}()
@@ -551,11 +622,12 @@ func (a *App) fetch(ctx context.Context) {
 	a.render()
 	previous := a.snapshot
 	fullFetch := a.needsFullFetch(time.Now())
+	connectionVersion := a.connectionVersion
 	go func() {
 		fetchCtx, cancel := context.WithTimeout(ctx, a.fetchTimeout)
 		defer cancel()
 		snapshot, err := a.fetchSnapshot(fetchCtx, previous, fullFetch)
-		a.resultCh <- fetchResult{snapshot: snapshot, err: err, full: fullFetch}
+		a.resultCh <- fetchResult{snapshot: snapshot, err: err, full: fullFetch, connectionVersion: connectionVersion}
 	}()
 }
 
@@ -607,6 +679,7 @@ func (a *App) fetchDetail(ctx context.Context, uuid string, force bool) {
 	current.Err = nil
 	a.nodeDetail[key] = current
 	a.render()
+	connectionVersion := a.connectionVersion
 
 	go func() {
 		detailCtx, cancel := context.WithTimeout(ctx, a.detailTimeout)
@@ -631,7 +704,7 @@ func (a *App) fetchDetail(ctx context.Context, uuid string, force bool) {
 				result.Err = err
 			}
 		}
-		a.detailCh <- detailResult{key: key, detail: result}
+		a.detailCh <- detailResult{key: key, detail: result, connectionVersion: connectionVersion}
 	}()
 }
 

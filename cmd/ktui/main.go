@@ -52,6 +52,8 @@ func handleCommand(args []string) error {
 		return handleExport(args[1:])
 	case "config":
 		return handleConfig(args[1:])
+	case "profile":
+		return handleProfile(args[1:])
 	case "update":
 		if err := handleUpdate(args[1:]); err != nil {
 			return err
@@ -85,25 +87,31 @@ func handleTUI(args []string) error {
 	if err != nil {
 		return err
 	}
+	realtimeWindowDefault, err := cfg.RealtimeWindowDuration()
+	if err != nil {
+		return err
+	}
 
 	var (
 		baseURL        string
 		apiKey         string
 		interval       time.Duration
 		timeout        time.Duration
-		realtimePoints int
+		realtimeWindow time.Duration
 		chartYAxis     string
 		modeValue      string
+		profileName    string
 		ascii          bool
 		noColor        bool
 	)
 
 	flags := flag.NewFlagSet("ktui", flag.ExitOnError)
+	flags.StringVar(&profileName, "profile", cfg.Profile, "profile name")
 	flags.StringVar(&baseURL, "url", cfg.URL, "Komari base URL")
 	flags.StringVar(&apiKey, "api-key", cfg.APIKey, "Komari API key (sent as Bearer token)")
 	flags.DurationVar(&interval, "interval", intervalDefault, "refresh interval")
 	flags.DurationVar(&timeout, "timeout", timeoutDefault, "HTTP timeout")
-	flags.IntVar(&realtimePoints, "realtime-points", cfg.RealtimePoints, "realtime chart sample limit, 0 auto")
+	flags.DurationVar(&realtimeWindow, "realtime-window", realtimeWindowDefault, "realtime chart time window: 1m, 5m, or 10m")
 	flags.StringVar(&chartYAxis, "chart-y-axis", cfg.ChartYAxis, "percent chart Y axis mode: absolute or relative")
 	flags.StringVar(&modeValue, "mode", cfg.Mode, "view mode: sheet or line")
 	flags.BoolVar(&ascii, "ascii", cfg.ASCII, "use ASCII-only rendering for terminals/fonts with Unicode issues")
@@ -116,8 +124,12 @@ func handleTUI(args []string) error {
 	if flags.NArg() > 0 {
 		usageError(fmt.Errorf("unexpected argument %q", flags.Arg(0)))
 	}
-	if realtimePoints < 0 {
-		return fmt.Errorf("--realtime-points must be 0 or a positive number")
+	cfg, err = applyProfileFlag(cfg, profileName, flags, &baseURL, &apiKey)
+	if err != nil {
+		return err
+	}
+	if !validRealtimeWindow(realtimeWindow) {
+		return fmt.Errorf("--realtime-window must be 1m, 5m, or 10m")
 	}
 	chartYAxis = strings.ToLower(strings.TrimSpace(chartYAxis))
 	if chartYAxis != "absolute" && chartYAxis != "relative" {
@@ -143,12 +155,14 @@ func handleTUI(args []string) error {
 	}
 
 	app := tui.NewWithOptions(client, tui.Options{
+		Profile:           cfg.Profile,
+		Profiles:          tuiProfiles(cfg, baseURL, apiKey),
 		URL:               baseURL,
 		APIKey:            apiKey,
 		RefreshInterval:   interval,
 		FetchTimeout:      timeout,
 		DetailTimeout:     timeout,
-		RealtimePoints:    realtimePoints,
+		RealtimeWindow:    realtimeWindow,
 		ChartYAxisMode:    chartYAxis,
 		WarnCPU:           cfg.WarnCPU,
 		WarnRAM:           cfg.WarnRAM,
@@ -181,11 +195,13 @@ func handleStatus(args []string) error {
 	}
 
 	var (
-		baseURL string
-		apiKey  string
-		timeout time.Duration
+		baseURL     string
+		apiKey      string
+		timeout     time.Duration
+		profileName string
 	)
 	fs := flag.NewFlagSet("ktui status", flag.ExitOnError)
+	fs.StringVar(&profileName, "profile", cfg.Profile, "profile name")
 	fs.StringVar(&baseURL, "url", cfg.URL, "Komari base URL")
 	fs.StringVar(&apiKey, "api-key", cfg.APIKey, "Komari API key (sent as Bearer token)")
 	fs.DurationVar(&timeout, "timeout", timeoutDefault, "HTTP timeout")
@@ -196,6 +212,10 @@ func handleStatus(args []string) error {
 	}
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected status argument %q", fs.Arg(0))
+	}
+	cfg, err = applyProfileFlag(cfg, profileName, fs, &baseURL, &apiKey)
+	if err != nil {
+		return err
 	}
 
 	baseURL, apiKey, err = prepareConnectionConfig(cfg, baseURL, apiKey, os.Stdin, os.Stdout)
@@ -225,6 +245,43 @@ func parseModeFlag(value string) (tui.Mode, error) {
 	default:
 		return "", fmt.Errorf("--mode must be sheet or line")
 	}
+}
+
+func validRealtimeWindow(value time.Duration) bool {
+	switch value {
+	case time.Minute, 5 * time.Minute, 10 * time.Minute:
+		return true
+	default:
+		return false
+	}
+}
+
+func applyProfileFlag(cfg config.Config, profileName string, flags *flag.FlagSet, baseURL *string, apiKey *string) (config.Config, error) {
+	profileName = strings.TrimSpace(profileName)
+	if profileName == "" || profileName == cfg.Profile {
+		return cfg, nil
+	}
+	next, err := config.UseProfile(cfg, profileName)
+	if err != nil {
+		return cfg, err
+	}
+	if !flagWasSet(flags, "url") {
+		*baseURL = next.URL
+	}
+	if !flagWasSet(flags, "api-key") {
+		*apiKey = next.APIKey
+	}
+	return next, nil
+}
+
+func flagWasSet(flags *flag.FlagSet, name string) bool {
+	found := false
+	flags.Visit(func(item *flag.Flag) {
+		if item.Name == name {
+			found = true
+		}
+	})
+	return found
 }
 
 type serverTimeSource interface {
@@ -281,7 +338,10 @@ func loadEffectiveConfig() (config.Config, string, error) {
 	if err != nil {
 		return cfg, path, err
 	}
-	cfg = applyEnv(cfg)
+	cfg, err = applyEnv(cfg)
+	if err != nil {
+		return cfg, path, err
+	}
 	cfg = cfg.WithDefaults()
 	if err := cfg.Validate(); err != nil {
 		return cfg, path, err
@@ -289,7 +349,14 @@ func loadEffectiveConfig() (config.Config, string, error) {
 	return cfg, path, nil
 }
 
-func applyEnv(cfg config.Config) config.Config {
+func applyEnv(cfg config.Config) (config.Config, error) {
+	if value := os.Getenv("KTUI_PROFILE"); value != "" {
+		var err error
+		cfg, err = config.UseProfile(cfg, value)
+		if err != nil {
+			return cfg, err
+		}
+	}
 	if value := os.Getenv("KTUI_URL"); value != "" {
 		cfg.URL = value
 	}
@@ -302,13 +369,8 @@ func applyEnv(cfg config.Config) config.Config {
 	if value := os.Getenv("KTUI_TIMEOUT"); value != "" {
 		cfg.Timeout = value
 	}
-	if value := os.Getenv("KTUI_REALTIME_POINTS"); value != "" {
-		points, err := strconv.Atoi(value)
-		if err != nil {
-			cfg.RealtimePoints = -1
-		} else {
-			cfg.RealtimePoints = points
-		}
+	if value := os.Getenv("KTUI_REALTIME_WINDOW"); value != "" {
+		cfg.RealtimeWindow = strings.TrimSpace(value)
 	}
 	if value := os.Getenv("KTUI_CHART_Y_AXIS"); value != "" {
 		cfg.ChartYAxis = strings.ToLower(strings.TrimSpace(value))
@@ -350,7 +412,7 @@ func applyEnv(cfg config.Config) config.Config {
 	if envBool("NO_COLOR") || envBool("KTUI_NO_COLOR") {
 		cfg.NoColor = true
 	}
-	return cfg
+	return cfg, nil
 }
 
 func saveTUISettings(settings tui.PersistentSettings) error {
@@ -358,10 +420,22 @@ func saveTUISettings(settings tui.PersistentSettings) error {
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(settings.RenameProfileFrom) != "" {
+		cfg, err = config.RenameProfile(cfg, settings.RenameProfileFrom, settings.Profile)
+		if err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(settings.Profile) != "" {
+		cfg, err = config.UseProfile(cfg, settings.Profile)
+		if err != nil {
+			return err
+		}
+	}
 	cfg.Interval = settings.Interval
 	cfg.Timeout = settings.Timeout
 	cfg.Mode = settings.Mode
-	cfg.RealtimePoints = settings.RealtimePoints
+	cfg.RealtimeWindow = settings.RealtimeWindow
 	cfg.ChartYAxis = settings.ChartYAxisMode
 	cfg.ASCII = settings.ASCII
 	cfg.NoColor = settings.NoColor
@@ -373,12 +447,33 @@ func saveTUISettings(settings tui.PersistentSettings) error {
 	return err
 }
 
+func tuiProfiles(cfg config.Config, baseURL string, apiKey string) []tui.ConnectionProfile {
+	cfg = cfg.WithDefaults()
+	names := cfg.ProfileNames()
+	out := make([]tui.ConnectionProfile, 0, len(names))
+	for _, name := range names {
+		profile := cfg.Profiles[name]
+		if name == cfg.Profile {
+			if strings.TrimSpace(baseURL) != "" {
+				profile.URL = baseURL
+			}
+			profile.APIKey = apiKey
+		}
+		out = append(out, tui.ConnectionProfile{
+			Name:   name,
+			URL:    profile.URL,
+			APIKey: profile.APIKey,
+		})
+	}
+	return out
+}
+
 func prepareConnectionConfig(cfg config.Config, baseURL string, apiKey string, input *os.File, output io.Writer) (string, string, error) {
 	if strings.TrimSpace(baseURL) != "" {
 		return baseURL, apiKey, nil
 	}
 	if !isInteractiveTerminal(input) {
-		return "", "", fmt.Errorf("Komari URL is not set. Run `ktui config set url https://your-komari.example.com` or pass `--url https://your-komari.example.com`")
+		return "", "", fmt.Errorf("Komari URL is not set. Run `ktui profile add %s --url https://your-komari.example.com --use` or pass `--url https://your-komari.example.com`", cfg.Profile)
 	}
 	cfg.APIKey = apiKey
 	next, err := firstRunSetup(cfg, input, output)
@@ -408,9 +503,13 @@ func firstRunSetup(cfg config.Config, input io.Reader, output io.Writer) (config
 	if err != nil && err != io.EOF {
 		return cfg, err
 	}
-	cfg.URL = client.BaseURL()
-	if strings.TrimSpace(apiKey) != "" {
-		cfg.APIKey = strings.TrimSpace(apiKey)
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		apiKey = cfg.APIKey
+	}
+	cfg, err = config.SetActiveProfileConnection(cfg, client.BaseURL(), apiKey)
+	if err != nil {
+		return cfg, err
 	}
 	cfg = cfg.WithDefaults()
 	if err := cfg.Validate(); err != nil {
@@ -530,10 +629,7 @@ func handleConfig(args []string) error {
 		if err != nil {
 			return err
 		}
-		if cfg.APIKey != "" {
-			cfg.APIKey = "********"
-		}
-		data, err := json.MarshalIndent(cfg, "", "  ")
+		data, err := json.MarshalIndent(cfg.Redacted(), "", "  ")
 		if err != nil {
 			return err
 		}
@@ -563,9 +659,150 @@ func handleConfig(args []string) error {
 	}
 }
 
+func handleProfile(args []string) error {
+	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+		printProfileHelp()
+		return nil
+	}
+	switch args[0] {
+	case "list":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: ktui profile list")
+		}
+		cfg, _, err := config.Load()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%-6s %-20s %-8s %s\n", "ACTIVE", "NAME", "AUTH", "URL")
+		for _, name := range cfg.ProfileNames() {
+			profile := cfg.Profiles[name]
+			marker := ""
+			if name == cfg.Profile {
+				marker = "*"
+			}
+			auth := "none"
+			if strings.TrimSpace(profile.APIKey) != "" {
+				auth = "api-key"
+			}
+			fmt.Printf("%-6s %-20s %-8s %s\n", marker, name, auth, valueOr(profile.URL, "-"))
+		}
+		return nil
+	case "current":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: ktui profile current")
+		}
+		cfg, _, err := config.Load()
+		if err != nil {
+			return err
+		}
+		fmt.Println(cfg.Profile)
+		return nil
+	case "use":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: ktui profile use <name>")
+		}
+		cfg, _, err := config.Load()
+		if err != nil {
+			return err
+		}
+		cfg, err = config.UseProfile(cfg, args[1])
+		if err != nil {
+			return err
+		}
+		path, err := config.Save(cfg)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("active profile: %s\n%s\n", cfg.Profile, path)
+		return nil
+	case "add":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: ktui profile add <name> --url URL [--api-key KEY] [--use]")
+		}
+		name := args[1]
+		fs := flag.NewFlagSet("ktui profile add", flag.ExitOnError)
+		url := fs.String("url", "", "Komari base URL")
+		apiKey := fs.String("api-key", "", "Komari API key")
+		useProfile := fs.Bool("use", false, "make this profile active")
+		fs.Usage = printProfileHelp
+		if err := fs.Parse(args[2:]); err != nil {
+			return err
+		}
+		if fs.NArg() > 0 {
+			return fmt.Errorf("unexpected profile add argument %q", fs.Arg(0))
+		}
+		cfg, _, err := config.Load()
+		if err != nil {
+			return err
+		}
+		client, err := komari.NewClientWithOptions(*url, komari.Options{})
+		if err != nil {
+			return err
+		}
+		cfg, err = config.AddProfile(cfg, name, client.BaseURL(), *apiKey)
+		if err != nil {
+			return err
+		}
+		if *useProfile {
+			cfg, err = config.UseProfile(cfg, name)
+			if err != nil {
+				return err
+			}
+		}
+		path, err := config.Save(cfg)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("saved profile: %s\n%s\n", name, path)
+		return nil
+	case "remove":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: ktui profile remove <name>")
+		}
+		cfg, _, err := config.Load()
+		if err != nil {
+			return err
+		}
+		cfg, err = config.RemoveProfile(cfg, args[1])
+		if err != nil {
+			return err
+		}
+		path, err := config.Save(cfg)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("removed profile: %s\nactive profile: %s\n%s\n", args[1], cfg.Profile, path)
+		return nil
+	case "rename":
+		if len(args) != 3 {
+			return fmt.Errorf("usage: ktui profile rename <old> <new>")
+		}
+		newName, err := config.NormalizeProfileName(args[2])
+		if err != nil {
+			return err
+		}
+		cfg, _, err := config.Load()
+		if err != nil {
+			return err
+		}
+		cfg, err = config.RenameProfile(cfg, args[1], args[2])
+		if err != nil {
+			return err
+		}
+		path, err := config.Save(cfg)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("renamed profile: %s -> %s\nactive profile: %s\n%s\n", args[1], newName, cfg.Profile, path)
+		return nil
+	default:
+		return fmt.Errorf("unknown profile command %q", args[0])
+	}
+}
+
 func handleHelp(args []string) error {
 	if len(args) > 1 {
-		return fmt.Errorf("usage: ktui help [status|config|keys|update|export]")
+		return fmt.Errorf("usage: ktui help [status|config|profile|keys|update|export]")
 	}
 	if len(args) == 0 {
 		printHelp()
@@ -576,6 +813,8 @@ func handleHelp(args []string) error {
 		printStatusHelp()
 	case "config":
 		printConfigHelp()
+	case "profile":
+		printProfileHelp()
 	case "keys":
 		printKeysHelp()
 	case "update":
@@ -639,11 +878,13 @@ Usage:
   ktui status [flags]
   ktui export <markdown|csv|json> [flags]
   ktui config <init|path|show|set|help>
+  ktui profile <list|current|use|add|rename|remove>
   ktui update <check|install>
   ktui version
-  ktui help [status|config|keys|update|export]
+  ktui help [status|config|profile|keys|update|export]
 
 Connection flags:
+  --profile NAME    profile name
   --url URL          Komari base URL
   --api-key KEY     Komari API key, sent as a Bearer token
   --timeout 10s     HTTP timeout
@@ -652,8 +893,8 @@ Connection flags:
 TUI flags:
   --interval 5s     refresh interval
   --mode MODE       view mode: sheet or line
-  --realtime-points N
-                   realtime chart sample limit, 0 auto
+  --realtime-window DURATION
+                   realtime chart time window: 1m, 5m, or 10m
   --chart-y-axis MODE
                    percent chart Y axis mode: absolute or relative
   --ascii           use ASCII-only rendering
@@ -671,6 +912,8 @@ Examples:
   ktui export csv --output nodes.csv
   ktui config init
   ktui config set api-key your_api_key
+  ktui profile add prod --url https://komari.example.com --use
+  ktui --profile prod
   ktui help keys
 `
 
@@ -687,6 +930,7 @@ Usage:
   ktui status [flags]
 
 Flags:
+  --profile NAME    profile name
   --url URL          Komari base URL
   --api-key KEY     Komari API key, sent as a Bearer token
   --timeout 10s     HTTP timeout
@@ -747,12 +991,13 @@ Commands:
   ktui config help
 
 Keys:
+  profile   active profile name
   url       Komari base URL
   api-key   Komari API key
   interval  refresh interval, for example 5s
   timeout   HTTP timeout, for example 10s
-  realtime-points
-            realtime chart sample limit, 0 auto
+  realtime-window
+            realtime chart time window: 1m, 5m, or 10m
   chart-y-axis
             percent chart Y axis mode: absolute or relative
   warn-cpu  CPU warning threshold percent, for example 90
@@ -767,6 +1012,28 @@ Keys:
 Precedence:
   defaults < config file < environment variables < command-line flags
 `, path)
+}
+
+func printProfileHelp() {
+	fmt.Print(`ktui profile - manage Komari connection profiles
+
+Usage:
+  ktui profile list
+  ktui profile current
+  ktui profile use <name>
+  ktui profile add <name> --url URL [--api-key KEY] [--use]
+  ktui profile rename <old> <new>
+  ktui profile remove <name>
+
+Examples:
+  ktui profile add prod --url https://komari.example.com --api-key your_api_key --use
+  ktui profile add lab --url https://lab.example.com
+  ktui profile list
+  ktui profile use prod
+  ktui profile rename lab staging
+  ktui --profile lab
+  KTUI_PROFILE=prod ktui status
+`)
 }
 
 func printKeysHelp() {
@@ -825,7 +1092,9 @@ Settings layer:
   Left/h, Right/l    adjust value
   Enter              toggle or advance value
   ?                  open about
-  url/api_key        shown as read-only
+  profile            switch active profile when multiple profiles exist
+  rename_profile     Enter edit, Enter save, Esc cancel
+  site/url/api_key   shown as read-only
 
 About:
   Esc, q, ?          return to previous layer
