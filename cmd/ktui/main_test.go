@@ -62,11 +62,13 @@ func TestHelpTextUsesRefactoredCommands(t *testing.T) {
 		"ktui export <markdown|csv|json> [flags]",
 		"ktui profile <list|current|use|add|rename|remove>",
 		"ktui update <check|install>",
+		"ktui completion <bash|zsh|fish|powershell>",
 		"--profile NAME",
 		"--mode MODE",
 		"--realtime-window DURATION",
 		"ktui update check",
 		"ktui update install",
+		"ktui completion bash",
 	} {
 		if !strings.Contains(helpText, want) {
 			t.Fatalf("help text missing %q:\n%s", want, helpText)

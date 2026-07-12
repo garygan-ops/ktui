@@ -30,13 +30,7 @@ const (
 )
 
 func main() {
-	args, configPath := splitConfigArg(os.Args[1:])
-	if configPath != "" {
-		if err := os.Setenv("KTUI_CONFIG", configPath); err != nil {
-			fatal(err)
-		}
-	}
-	if err := handleCommand(args); err != nil {
+	if err := execute(); err != nil {
 		fatal(err)
 	}
 }
@@ -802,7 +796,7 @@ func handleProfile(args []string) error {
 
 func handleHelp(args []string) error {
 	if len(args) > 1 {
-		return fmt.Errorf("usage: ktui help [status|config|profile|keys|update|export]")
+		return fmt.Errorf("usage: ktui help [status|config|profile|keys|update|export|completion]")
 	}
 	if len(args) == 0 {
 		printHelp()
@@ -880,8 +874,9 @@ Usage:
   ktui config <init|path|show|set|help>
   ktui profile <list|current|use|add|rename|remove>
   ktui update <check|install>
+  ktui completion <bash|zsh|fish|powershell>
   ktui version
-  ktui help [status|config|profile|keys|update|export]
+  ktui help [status|config|profile|keys|update|export|completion]
 
 Connection flags:
   --profile NAME    profile name
@@ -908,6 +903,7 @@ Examples:
   ktui version
   ktui update check
   ktui update install
+  ktui completion bash
   ktui export markdown
   ktui export csv --output nodes.csv
   ktui config init

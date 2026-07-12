@@ -145,13 +145,37 @@ ktui [flags]
 ktui status [flags]
 ktui export <markdown|csv|json> [flags]
 ktui config <init|path|show|set|help>
-ktui profile <list|current|use|add|rename|remove>
-ktui update <check|install>
+ktui keys
+ktui profile <list|current|use|add|rename|remove|help>
+ktui update <check|install|help>
+ktui completion <bash|zsh|fish|powershell>
 ktui version
-ktui help [status|config|profile|keys|update|export]
+ktui help [command]
 ```
 
 连接到多个 Komari 站点时使用 `ktui profile ...` 管理，并可用 `--profile name` 临时选择。TUI 专属显示参数使用 `--mode sheet|line`。`--realtime-window 1m|5m|10m` 控制 realtime 图表横轴时间范围。一次性拉取摘要使用 `ktui status`，更新检查和安装分别使用 `ktui update check`、`ktui update install`。
+
+## Shell 补全
+
+`ktui completion` 可以生成 Tab 补全脚本。加载后可以补全子命令、常用 flags、枚举值、配置键和已保存的 profile 名称。
+
+当前终端临时启用：
+
+```sh
+source <(ktui completion bash)
+# zsh:
+source <(ktui completion zsh)
+# fish:
+ktui completion fish | source
+```
+
+PowerShell：
+
+```powershell
+ktui completion powershell | Out-String | Invoke-Expression
+```
+
+持久启用时，把对应命令放进 `~/.bashrc`、`~/.zshrc`、fish 配置或 PowerShell profile；也可以把 `ktui completion zsh` 输出保存为 `$fpath` 目录里的 `_ktui` 文件。
 
 ## 配置文件
 
