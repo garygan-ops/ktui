@@ -384,6 +384,10 @@ ktui version
 
 通过 GoReleaser 发布的二进制会显示 tag 版本、commit 和构建时间；本地直接 `go build` 的版本会显示为 `dev`。
 
+从 `v1.0.0` 开始，ktui 将命令名称与参数、配置文件格式、JSON/CSV/Markdown 导出字段以及 Release 产物命名视为稳定兼容边界。必要的破坏性调整只会在新的主版本中进行，并在 Release 说明中提供迁移方法。
+
+维护者发布新版本前应按 [RELEASING.md](./RELEASING.md) 完成自动检查、跨平台验证和 RC 观察。
+
 ## 自更新
 
 `ktui update install` 会从 Gitea Release 下载当前系统和架构对应的压缩包，使用 `checksums.txt` 校验后替换当前二进制。只检查新版本时使用 `ktui update check`。

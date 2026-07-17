@@ -49,6 +49,9 @@ func newRootCommand() *cobra.Command {
 			return handleTUI(changedFlagArgs(cmd))
 		},
 	}
+	root.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		printHelp()
+	})
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.PersistentFlags().String("config", defaultConfigPath(), "config file path")
 	must(root.MarkPersistentFlagFilename("config"))
@@ -83,6 +86,9 @@ func newStatusCommand() *cobra.Command {
 			return handleStatus(changedFlagArgs(cmd))
 		},
 	}
+	cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		printStatusHelp()
+	})
 	addStatusFlags(cmd)
 	addConnectionFlagCompletions(cmd)
 	return cmd
@@ -102,6 +108,9 @@ func newExportCommand() *cobra.Command {
 			return handleExport(next)
 		},
 	}
+	cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		printExportHelp()
+	})
 	addStatusFlags(cmd)
 	cmd.Flags().StringP("output", "o", "", "write export to a file instead of stdout")
 	must(cmd.MarkFlagFilename("output"))
@@ -128,6 +137,9 @@ func newConfigCommand() *cobra.Command {
 			return handleConfig(nil)
 		},
 	}
+	cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		printConfigHelp()
+	})
 	cmd.AddCommand(
 		initCmd,
 		&cobra.Command{
@@ -175,6 +187,9 @@ func newProfileCommand() *cobra.Command {
 			return handleProfile(nil)
 		},
 	}
+	cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		printProfileHelp()
+	})
 	cmd.AddCommand(
 		&cobra.Command{
 			Use:   "list",
@@ -260,6 +275,9 @@ func newUpdateCommand() *cobra.Command {
 			return handleUpdate(nil)
 		},
 	}
+	cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		printUpdateHelp()
+	})
 	cmd.AddCommand(
 		newUpdateCheckCommand(),
 		newUpdateInstallCommand(),
@@ -302,7 +320,7 @@ func newUpdateInstallCommand() *cobra.Command {
 }
 
 func newVersionCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
 		Args:  cobra.NoArgs,
@@ -310,10 +328,14 @@ func newVersionCommand() *cobra.Command {
 			printVersion()
 		},
 	}
+	cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		printVersionHelp()
+	})
+	return cmd
 }
 
 func newKeysCommand() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "keys",
 		Short: "Show TUI key bindings",
 		Args:  cobra.NoArgs,
@@ -321,6 +343,10 @@ func newKeysCommand() *cobra.Command {
 			printKeysHelp()
 		},
 	}
+	cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		printKeysHelp()
+	})
+	return cmd
 }
 
 func newCompletionCommand() *cobra.Command {
@@ -348,6 +374,9 @@ func newCompletionCommand() *cobra.Command {
 			}
 		},
 	}
+	cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		printCompletionHelp()
+	})
 	return cmd
 }
 

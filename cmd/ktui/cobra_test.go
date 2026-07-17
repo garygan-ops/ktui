@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -80,6 +82,86 @@ func TestCobraHiddenCompletionCommand(t *testing.T) {
 			t.Fatalf("hidden completion output missing %q:\n%s", want, text)
 		}
 	}
+}
+
+func TestCobraHelpPreservesDetailedTopics(t *testing.T) {
+	for _, tt := range []struct {
+		topic string
+		want  string
+	}{
+		{topic: "keys", want: "List layer:"},
+		{topic: "config", want: "Precedence:"},
+		{topic: "profile", want: "ktui profile add <name>"},
+		{topic: "update", want: "Default API URL:"},
+		{topic: "export", want: "-o, --output PATH"},
+		{topic: "completion", want: "completion <bash|zsh|fish|powershell>"},
+		{topic: "version", want: "ktui version - print version information"},
+	} {
+		t.Run(tt.topic, func(t *testing.T) {
+			root := newRootCommand()
+			root.SetArgs([]string{"help", tt.topic})
+			got := captureStdout(t, func() {
+				if err := root.Execute(); err != nil {
+					t.Fatal(err)
+				}
+			})
+			if !strings.Contains(got, tt.want) {
+				t.Fatalf("ktui help %s output missing %q:\n%s", tt.topic, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestCobraProfileAddUsesConfigAndFlags(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("KTUI_CONFIG", filepath.Join(t.TempDir(), "wrong.json"))
+	root := newRootCommand()
+	root.SetArgs([]string{
+		"--config", path,
+		"profile", "add", "prod",
+		"--url", "prod.example.com",
+		"--api-key", "secret",
+		"--use",
+	})
+	captureStdout(t, func() {
+		if err := root.Execute(); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	cfg, _, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Profile != "prod" || cfg.URL != "https://prod.example.com" || cfg.APIKey != "secret" {
+		t.Fatalf("cfg = %+v", cfg)
+	}
+}
+
+func captureStdout(t *testing.T, run func()) string {
+	t.Helper()
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := os.Stdout
+	os.Stdout = write
+	defer func() {
+		os.Stdout = original
+	}()
+
+	run()
+	if err := write.Close(); err != nil {
+		t.Fatal(err)
+	}
+	output, err := io.ReadAll(read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := read.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return string(output)
 }
 
 func hasString(values []string, want string) bool {

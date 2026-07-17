@@ -63,17 +63,11 @@ release:
   prerelease: auto
   mode: replace
   header: |
-    ## 本次更新重点
+    ## ktui {{ .Version }}
 
-    - 新增 Profile 多站点管理：支持 `ktui profile add/list/current/use/rename/remove`，可为多个 Komari 站点保存独立 URL 和 API key。
-    - 支持运行中切换 Profile：Settings 页面可直接切换当前 profile，切换后会重建连接、清空旧站点缓存并重新加载数据。
-    - 支持 Profile 重命名：命令行可使用 `ktui profile rename <old> <new>`，Settings 页面可通过 `rename_profile` 编辑当前 profile 名称。
-    - 新增 `realtime_window`：可设置 `1m`、`5m`、`10m` 控制 realtime 图表横轴范围，并移除用户侧 `realtime_points` 配置。
-    - 更新 Settings / About / README / help 文档：更清楚展示当前 profile、站点名、连接 URL 和 profile 操作方式。
+    本 Release 由 GoReleaser 自动构建。请下载与你的系统和架构匹配的压缩包，并使用 `checksums.txt` 校验 SHA256。
 
-    本 Release 由 GoReleaser 自动生成。
-
-    请下载与你的系统和架构匹配的 ktui 压缩包，并使用 checksums.txt 校验 SHA256。
+    Linux / macOS 可使用 `install.sh` 安装，Windows 可使用 `install.ps1` 安装。升级前请阅读下方自动生成的变更记录。
 
 gitea_urls:
   api: https://gitea.bytevibe.dev/api/v1

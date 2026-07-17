@@ -796,7 +796,7 @@ func handleProfile(args []string) error {
 
 func handleHelp(args []string) error {
 	if len(args) > 1 {
-		return fmt.Errorf("usage: ktui help [status|config|profile|keys|update|export|completion]")
+		return fmt.Errorf("usage: ktui help [status|config|profile|keys|update|export|completion|version]")
 	}
 	if len(args) == 0 {
 		printHelp()
@@ -815,6 +815,10 @@ func handleHelp(args []string) error {
 		printUpdateHelp()
 	case "export":
 		printExportHelp()
+	case "completion":
+		printCompletionHelp()
+	case "version":
+		printVersionHelp()
 	default:
 		return fmt.Errorf("unknown help topic %q", args[0])
 	}
@@ -876,7 +880,7 @@ Usage:
   ktui update <check|install>
   ktui completion <bash|zsh|fish|powershell>
   ktui version
-  ktui help [status|config|profile|keys|update|export|completion]
+  ktui help [status|config|profile|keys|update|export|completion|version]
 
 Connection flags:
   --profile NAME    profile name
@@ -917,6 +921,28 @@ func printVersion() {
 	fmt.Printf("ktui %s\n", version)
 	fmt.Printf("commit: %s\n", commit)
 	fmt.Printf("built:  %s\n", date)
+}
+
+func printVersionHelp() {
+	fmt.Print(`ktui version - print version information
+
+Usage:
+  ktui version
+`)
+}
+
+func printCompletionHelp() {
+	fmt.Print(`ktui completion - generate a shell completion script
+
+Usage:
+  ktui completion <bash|zsh|fish|powershell>
+
+Examples:
+  source <(ktui completion bash)
+  source <(ktui completion zsh)
+  ktui completion fish | source
+  ktui completion powershell | Out-String | Invoke-Expression
+`)
 }
 
 func printStatusHelp() {

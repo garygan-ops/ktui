@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  quality:
     runs-on: ubuntu-latest
 
     steps:
@@ -23,8 +23,54 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Verify dependencies
+        run: go mod verify
+
       - name: Test
         run: go test ./...
 
-      - name: Build
-        run: go build -trimpath -o ktui ./cmd/ktui
+      - name: Vet
+        run: go vet ./...
+
+      - name: Race test
+        run: go test -race ./...
+
+      - name: Check install script syntax
+        run: sh -n install.sh
+
+      - name: Check GoReleaser configuration
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        goos:
+          - linux
+          - darwin
+          - windows
+        goarch:
+          - amd64
+          - arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -trimpath -o ktui-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/ktui
